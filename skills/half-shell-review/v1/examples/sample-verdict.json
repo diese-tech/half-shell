@@ -1,0 +1,28 @@
+{
+  "protocol_version": "1.0.0",
+  "base_sha": "abc1234",
+  "reviewed_sha": "def5678",
+  "coverage": "All materially changed application files reviewed; generated lockfile excluded.",
+  "candidate_count": 5,
+  "rejected_count": 4,
+  "published_findings": [
+    {
+      "finding_id": "HS-001",
+      "severity": "high",
+      "confidence": 0.93,
+      "category": "contract",
+      "file": "src/example.ts",
+      "line": 42,
+      "start_line": null,
+      "claim": "A caller still uses the previous required argument contract.",
+      "evidence": "The changed function now requires tenantId, while the import path still calls it with the prior signature.",
+      "failure_mode": "The import path fails when executed because the required tenant identifier is absent.",
+      "suggested_fix": "Pass tenantId from the import context or preserve backwards compatibility.",
+      "corroboration_count": 2,
+      "corroborating_evidence": ["Independent runtime and contract lanes identified the same stale caller."]
+    }
+  ],
+  "unresolved_uncertainty": [],
+  "coverage_limitations": [],
+  "complete": true
+}
