@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/protocol/v1/verdict.schema.json",
+  "title": "Half-Shell Verdict v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "reviewed_sha",
+    "coverage",
+    "candidate_count",
+    "rejected_count",
+    "published_findings",
+    "complete"
+  ],
+  "properties": {
+    "protocol_version": {"type": "string", "const": "1.0.0"},
+    "reviewed_sha": {"type": "string", "minLength": 7},
+    "base_sha": {"type": ["string", "null"], "minLength": 7},
+    "coverage": {"type": "string", "minLength": 1},
+    "candidate_count": {"type": "integer", "minimum": 0},
+    "rejected_count": {"type": "integer", "minimum": 0},
+    "published_findings": {
+      "type": "array",
+      "items": {"$ref": "finding.schema.json"}
+    },
+    "unresolved_uncertainty": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "default": []
+    },
+    "coverage_limitations": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "default": []
+    },
+    "complete": {"type": "boolean"}
+  }
+}
