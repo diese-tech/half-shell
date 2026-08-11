@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/protocol/v1/critique.schema.json",
+  "title": "Half-Shell Sparring Critique v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["finding_id", "action", "reasoning"],
+  "properties": {
+    "finding_id": {"type": "string", "minLength": 1},
+    "action": {
+      "type": "string",
+      "enum": ["SUPPORT", "CHALLENGE", "ADD_EVIDENCE", "LOWER_SEVERITY", "RAISE_SEVERITY", "MARK_DUPLICATE", "REQUEST_INVESTIGATION"]
+    },
+    "reasoning": {"type": "string", "minLength": 1},
+    "evidence": {"type": ["string", "null"]},
+    "suggested_severity": {"type": ["string", "null"], "enum": ["critical", "high", "medium", "low", null]},
+    "duplicate_of": {"type": ["string", "null"]}
+  }
+}
