@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/protocol/v1/resolution.schema.json",
+  "title": "Half-Shell Finding Resolution v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["finding_id", "status", "reasoning"],
+  "properties": {
+    "finding_id": {"type": "string", "minLength": 1},
+    "status": {
+      "type": "string",
+      "enum": ["RESOLVED", "STILL_VALID", "PARTIALLY_RESOLVED", "WITHDRAWN", "NEEDS_MORE_EVIDENCE"]
+    },
+    "reasoning": {"type": "string", "minLength": 1},
+    "evidence": {"type": ["string", "null"]},
+    "reviewed_sha": {"type": ["string", "null"], "minLength": 7}
+  }
+}
