@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ProviderRouter } from '../providers/router.js';
 import type { CompletionRequest, CompletionResult, Provider } from '../providers/types.js';
-import type { ChangeContext } from '../types.js';
+import type { ChangeContext, ChangedFile } from '../types.js';
 import { runReview } from './review.js';
 
 /**
@@ -199,6 +199,104 @@ describe('runReview', () => {
 
     expect(run.verdict.complete).toBe(false);
     expect(run.verdict.published_findings).toHaveLength(0);
+  });
+
+  it('marks the review incomplete when the Shredder Challenge cannot run', async () => {
+    const provider = new (class extends ScriptedProvider {
+      override async complete(request: CompletionRequest): Promise<CompletionResult> {
+        if (detectPhase(request.system) === 'shredder') throw new Error('provider exploded');
+        return super.complete(request);
+      }
+    })(script());
+
+    const { run } = await runReview(router(provider), context, {
+      depth: 'standard',
+      maxPatchChars: 5000,
+    });
+
+    // A finding that never faced the adversarial pass has not survived review.
+    expect(run.verdict.complete).toBe(false);
+    expect(run.verdict.coverage_limitations?.join(' ')).toContain('Shredder Challenge');
+  });
+
+  it('marks the review incomplete when a Sparring pass cannot run', async () => {
+    let failed = false;
+    const provider = new (class extends ScriptedProvider {
+      override async complete(request: CompletionRequest): Promise<CompletionResult> {
+        if (detectPhase(request.system) === 'sparring' && !failed) {
+          failed = true;
+          throw new Error('provider exploded');
+        }
+        return super.complete(request);
+      }
+    })(script());
+
+    const { run } = await runReview(router(provider), context, {
+      depth: 'standard',
+      maxPatchChars: 5000,
+    });
+
+    expect(run.verdict.complete).toBe(false);
+    expect(run.verdict.coverage_limitations?.join(' ')).toContain('Sparring pass did not complete');
+  });
+
+  it('publishes nothing when Leonardo adjudicates only part of the pool', async () => {
+    const second = { ...FINDING, file: 'src/loader.ts', line: 3, claim: 'The TODO admits the change is unfinished.', category: 'incomplete_change' };
+    const provider = new ScriptedProvider(
+      script({
+        'lane:Raphael': JSON.stringify({ findings: [FINDING] }),
+        'lane:Donatello': JSON.stringify({ findings: [second] }),
+        verdict: JSON.stringify({
+          // Only one of the two pooled findings is adjudicated.
+          decisions: [{ finding_id: 'HS-001', decision: 'PUBLISH', reasoning: 'holds' }],
+          unresolved_uncertainty: [],
+        }),
+      }),
+    );
+
+    const { run, pool } = await runReview(router(provider), context, {
+      depth: 'standard',
+      maxPatchChars: 5000,
+    });
+
+    expect(pool.length).toBe(2);
+    expect(run.verdict.published_findings).toHaveLength(0);
+    expect(run.verdict.complete).toBe(false);
+  });
+
+  it('reports files the prompt budget pushed out as unreviewed', async () => {
+    const provider = new ScriptedProvider(script());
+    const crowded: ChangeContext = {
+      ...context,
+      files: [
+        context.files[0] as ChangedFile,
+        {
+          path: 'src/second.ts',
+          status: 'modified',
+          additions: 60,
+          deletions: 0,
+          truncated: false,
+          // Far too large to fit alongside the first file in the budget below.
+          patch: [
+            '@@ -1,2 +1,62 @@',
+            ' const x = 1;',
+            ...Array.from({ length: 60 }, (_, i) => `+const value${i} = ${'y'.repeat(40)};`),
+            ' const z = 3;',
+          ].join('\n'),
+        },
+      ],
+      omittedFiles: [],
+    };
+
+    const { run } = await runReview(router(provider), crowded, {
+      depth: 'standard',
+      maxPatchChars: 5000,
+      // Enough for the header and the first file, not the second.
+      maxPromptChars: 1200,
+    });
+
+    expect(run.verdict.coverage).toContain('src/second.ts');
+    expect(run.verdict.coverage_limitations?.join(' ')).toContain('not reviewed');
   });
 
   it('does not leak investigator identity into the deliberation prompts', async () => {

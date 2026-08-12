@@ -23,8 +23,14 @@ export function findingKey(finding: Finding): string {
   return createHash('sha256').update(basis).digest('hex').slice(0, 16);
 }
 
+/** Hidden marker so a posted comment can be matched back to its finding. */
+export function findingMarker(finding: Finding): string {
+  return `<!-- half-shell-finding:${findingKey(finding)} -->`;
+}
+
 export function renderFindingComment(finding: Finding, rationale?: string): string {
   const lines = [
+    findingMarker(finding),
     `**${SEVERITY_LABEL[finding.severity]} · ${finding.category}** — ${finding.claim}`,
     '',
     `**Evidence.** ${finding.evidence}`,

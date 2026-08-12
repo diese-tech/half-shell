@@ -2,6 +2,7 @@ import { buildBrief } from '../council/briefing.js';
 import { runLanes } from '../council/lanes.js';
 import { buildAnonymousPool } from '../council/pool.js';
 import { runShredder, runSparring } from '../council/sparring.js';
+import { renderChange } from '../council/prompt.js';
 import { assembleVerdict, runVerdict } from '../council/verdict.js';
 import { describeCoverage } from '../github/context.js';
 import { buildDiffIndex } from '../github/diff.js';
@@ -14,6 +15,8 @@ import { anchorFindings } from './anchor.js';
 export interface ReviewOptions {
   depth: ReviewDepth;
   maxPatchChars: number;
+  /** Character budget for the whole rendered change in one prompt. */
+  maxPromptChars?: number;
 }
 
 export interface ReviewResult {
@@ -32,7 +35,10 @@ export async function runReview(
   options: ReviewOptions,
 ): Promise<ReviewResult> {
   const startedAt = new Date().toISOString();
-  const render = { maxPatchChars: options.maxPatchChars };
+  const render = {
+    maxPatchChars: options.maxPatchChars,
+    maxTotalChars: options.maxPromptChars,
+  };
   const diffs = buildDiffIndex(context.files);
 
   log.info('review started', {
@@ -42,8 +48,15 @@ export async function runReview(
     depth: options.depth,
   });
 
-  const brief = await buildBrief(router, context, render);
-  const { candidates, outcomes } = await runLanes(router, context, brief, render, options.depth);
+  // Render once and reuse: what the investigators saw is what coverage claims.
+  const change = renderChange(context, render);
+  for (const omission of change.omitted) {
+    context.omittedFiles.push(omission);
+  }
+  context.files = context.files.filter((file) => change.includedPaths.includes(file.path));
+
+  const brief = await buildBrief(router, context, change.text);
+  const { candidates, outcomes } = await runLanes(router, change.text, brief, options.depth);
 
   // Ground every claim in the real diff before the council spends effort on it.
   const anchored = anchorFindings(candidates, diffs);
@@ -55,16 +68,24 @@ export async function runReview(
   }
 
   const pool = buildAnonymousPool(anchored.kept);
-  const critiques = await runSparring(router, pool, brief);
-  const shredder = await runShredder(router, pool, brief, critiques);
+  const sparring = await runSparring(router, pool, brief);
+  const shredder = await runShredder(router, pool, brief, sparring.critiques);
+
+  // A finding that never faced the adversarial pass has not survived review.
+  const shredderFailed = !shredder.ok && pool.length > 0;
+  const challengeFailures = sparring.failedRoles.length + (shredderFailed ? 1 : 0);
 
   const coverage = describeCoverage(context);
   const coverageLimitations = buildLimitations(context, outcomes, anchored.dropped.length);
+  for (const role of sparring.failedRoles) {
+    coverageLimitations.push(`The ${role} Sparring pass did not complete.`);
+  }
+  if (shredderFailed) coverageLimitations.push('The Shredder Challenge did not complete.');
 
   const adjudication = await runVerdict(router, {
     pool,
     brief,
-    critiques,
+    critiques: sparring.critiques,
     shredder,
     coverage,
     coverageLimitations,
@@ -78,6 +99,7 @@ export async function runReview(
     coverage,
     coverageLimitations,
     laneFailures: outcomes.filter((outcome) => !outcome.ok).length,
+    challengeFailures,
   });
 
   const run: ReviewRun = {

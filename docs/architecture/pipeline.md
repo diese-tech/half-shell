@@ -53,7 +53,9 @@ council is not rerun.
 | Leonardo is the sole publisher | `verdict.ts` publishes only findings with an explicit approving decision |
 | Untrusted input cannot override the protocol | `prompt.ts` wraps all PR content in `<untrusted_input>` with an explicit instruction |
 | Structured output must validate | `protocol/schema.ts` validates every finding, critique, resolution and the final verdict |
-| No clean review after failed coverage | `verdict.ts` sets `complete: false` when a lane or adjudication failed; `publish.ts` says so in the body |
+| No clean review after failed coverage | `verdict.ts` sets `complete: false` when any lane, Sparring pass, the Shredder Challenge, or adjudication failed; `publish.ts` says so in the body |
+| Coverage claims only what was reviewed | `prompt.ts` reports files the prompt budget excluded; `review.ts` moves them into the omitted set before coverage is described |
+| Every pooled finding must be adjudicated | `verdict.ts` treats partial adjudication as a failed phase and publishes nothing |
 | Never silently use paid inference | `providers/router.ts` drops `paid` providers unless `HALF_SHELL_ALLOW_PAID_INFERENCE` is set |
 | Record the protocol version | every run and verdict carries `protocol_version` |
 
@@ -72,9 +74,12 @@ than a silently thinner review.
 - Findings that cannot be anchored are summarized in the review body instead of
   being attached to an arbitrary line.
 - A finding already published on an earlier commit is not posted again; its
-  identity is a hash of file, category and normalized claim.
+  identity is a hash of file, category and normalized claim, embedded in the
+  comment as a hidden marker so replies can be traced back to it across runs.
 - When a re-review finds nothing new and the previous review still stands,
   Half-Shell stays silent.
+- A reply carrying no command is verified only when its parent comment is a
+  known Half-Shell finding; unrelated review threads are left alone.
 - Reviews are posted as `COMMENT`. Half-Shell never approves or blocks a PR.
 
 ## Persistence

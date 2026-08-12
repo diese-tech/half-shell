@@ -106,6 +106,24 @@ describe('toReviewJob', () => {
 
     expect(job).toMatchObject({ kind: 'verify', pullNumber: 12 });
     expect(job?.thread).toMatchObject({ commentId: 99, inReplyToId: 42, path: 'src/a.ts' });
+    // Implicit: whether the thread is Half-Shell's is decided against state.
+    expect(job?.thread?.implicit).toBe(true);
+  });
+
+  it('marks a commanded review comment as explicit', () => {
+    const job = toReviewJob(
+      delivery('pull_request_review_comment', {
+        action: 'created',
+        installation: { id: 7 },
+        sender: { login: 'dev' },
+        repository: REPO,
+        pull_request: { number: 12 },
+        comment: { id: 99, body: '@half-shell verify', path: 'src/a.ts', line: 10 },
+      }),
+      APP_LOGIN,
+    );
+
+    expect(job?.thread?.implicit).toBe(false);
   });
 
   it('ignores deliveries without an installation', () => {

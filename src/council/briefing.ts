@@ -3,7 +3,7 @@ import type { ProviderRouter } from '../providers/router.js';
 import { log, errorFields } from '../logger.js';
 import type { ChangeContext } from '../types.js';
 import { BRIEFING_PERSONA } from './personas.js';
-import { renderChange, systemPrompt, untrusted, type ContextRenderOptions } from './prompt.js';
+import { systemPrompt, untrusted } from './prompt.js';
 
 export interface ChangeBrief {
   claimed_change: string;
@@ -31,7 +31,7 @@ const INSTRUCTION = [
 export async function buildBrief(
   router: ProviderRouter,
   context: ChangeContext,
-  render: ContextRenderOptions,
+  change: string,
 ): Promise<ChangeBrief> {
   const fallback: ChangeBrief = {
     claimed_change: context.title,
@@ -44,7 +44,7 @@ export async function buildBrief(
   try {
     const result = await router.complete({
       system: systemPrompt(BRIEFING_PERSONA, INSTRUCTION),
-      user: untrusted('github_pull_request', renderChange(context, render)),
+      user: untrusted('github_pull_request', change),
       json: true,
       temperature: 0,
     });

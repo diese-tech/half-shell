@@ -11,6 +11,7 @@ export interface GitHubConfig {
 export interface ReviewConfig {
   maxFiles: number;
   maxPatchChars: number;
+  maxPromptChars: number;
   dryRun: boolean;
   dataDir: string;
   /** Paths excluded from review context (generated/vendored noise). */
@@ -121,6 +122,7 @@ export function loadConfig(): Config {
     review: {
       maxFiles: int('HALF_SHELL_MAX_FILES', 40),
       maxPatchChars: int('HALF_SHELL_MAX_PATCH_CHARS', 12_000),
+      maxPromptChars: int('HALF_SHELL_MAX_PROMPT_CHARS', 120_000),
       dryRun: bool('HALF_SHELL_DRY_RUN', false),
       dataDir: env('HALF_SHELL_DATA_DIR') ?? '.half-shell',
       excludePatterns: DEFAULT_EXCLUDES,

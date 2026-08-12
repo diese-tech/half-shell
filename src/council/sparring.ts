@@ -45,13 +45,19 @@ export interface CouncilCritique extends Critique {
   author: string;
 }
 
+export interface SparringResult {
+  critiques: CouncilCritique[];
+  /** Council members whose critique pass never ran; affects coverage. */
+  failedRoles: string[];
+}
+
 /** Phase 4: every council member may evaluate every pooled finding. */
 export async function runSparring(
   router: ProviderRouter,
   pool: PoolItem[],
   brief: ChangeBrief,
-): Promise<CouncilCritique[]> {
-  if (pool.length === 0) return [];
+): Promise<SparringResult> {
+  if (pool.length === 0) return { critiques: [], failedRoles: [] };
 
   const user = [
     renderBrief(brief),
@@ -64,12 +70,19 @@ export async function runSparring(
   );
 
   const validIds = new Set(pool.map((item) => item.finding.finding_id));
-  return rounds.flat().filter((critique) => validIds.has(critique.finding_id));
+  return {
+    critiques: rounds
+      .flatMap((round) => round.critiques)
+      .filter((critique) => validIds.has(critique.finding_id)),
+    failedRoles: rounds.filter((round) => !round.ok).map((round) => round.role),
+  };
 }
 
 export interface ShredderChallenge {
   changeChallenge: string;
   critiques: CouncilCritique[];
+  /** False when the adversarial pass could not run at all. */
+  ok: boolean;
 }
 
 /** Phase 5: a dedicated adversarial pass after ordinary peer critique. */
@@ -102,11 +115,18 @@ export async function runShredder(
     return {
       changeChallenge: challenge,
       critiques: critiques.filter((critique) => validIds.has(critique.finding_id)),
+      ok: true,
     };
   } catch (error) {
     log.warn('shredder challenge failed', errorFields(error));
-    return { changeChallenge: '', critiques: [] };
+    return { changeChallenge: '', critiques: [], ok: false };
   }
+}
+
+interface CritiquePassResult {
+  role: string;
+  ok: boolean;
+  critiques: CouncilCritique[];
 }
 
 async function critiquePass(
@@ -114,7 +134,7 @@ async function critiquePass(
   persona: Persona,
   instruction: string,
   user: string,
-): Promise<CouncilCritique[]> {
+): Promise<CritiquePassResult> {
   try {
     const result = await router.complete({
       system: systemPrompt(persona, instruction),
@@ -122,10 +142,10 @@ async function critiquePass(
       json: true,
       temperature: 0.1,
     });
-    return extractCritiques(result.text, persona);
+    return { role: persona.id, ok: true, critiques: extractCritiques(result.text, persona) };
   } catch (error) {
     log.warn('sparring pass failed', { role: persona.id, ...errorFields(error) });
-    return [];
+    return { role: persona.id, ok: false, critiques: [] };
   }
 }
 

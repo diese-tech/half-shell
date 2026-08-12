@@ -58,6 +58,7 @@ async function main(): Promise<number> {
   const { run, rationale } = await runReview(router, context, {
     depth: args['deep'] === 'true' ? 'deep' : 'standard',
     maxPatchChars: config.review.maxPatchChars,
+    maxPromptChars: config.review.maxPromptChars,
   });
 
   if (args['json'] === 'true') {

@@ -106,6 +106,9 @@ export function toReviewJob(
         author: sender,
         path: comment.path ? String(comment.path) : undefined,
         line: comment.line ? Number(comment.line) : undefined,
+        // Whether this thread is one of ours is decided against stored state,
+        // which this layer cannot see.
+        implicit: !command,
       },
     };
   }

@@ -105,7 +105,16 @@ export async function runVerdict(
     const uncertainty = parseJsonArray<string>(result.text, ['unresolved_uncertainty']).filter(
       (entry): entry is string => typeof entry === 'string',
     );
-    return { ok: true, decisions, unresolvedUncertainty: uncertainty };
+    // Partial adjudication is a failed phase, not a licence to publish the
+    // subset that happened to parse: every pooled finding needs a decision.
+    const ok = decisions.length === input.pool.length;
+    if (!ok) {
+      log.error('adjudication did not cover the pool', {
+        pooled: input.pool.length,
+        decided: decisions.length,
+      });
+    }
+    return { ok, decisions, unresolvedUncertainty: uncertainty };
   } catch (error) {
     log.error('verdict phase failed', errorFields(error));
     return { ok: false, decisions: [], unresolvedUncertainty: [] };
@@ -153,6 +162,8 @@ export function assembleVerdict(params: {
   coverage: string;
   coverageLimitations: string[];
   laneFailures: number;
+  /** Sparring or Shredder passes that could not run. */
+  challengeFailures: number;
 }): VerdictAssembly {
   const { pool, adjudication } = params;
   const byId = new Map(pool.map((item) => [item.finding.finding_id, item.finding]));
@@ -215,8 +226,9 @@ export function assembleVerdict(params: {
     published_findings: adjudication.ok ? published : [],
     unresolved_uncertainty: uncertainty,
     coverage_limitations: limitations,
-    // Rule 12: a clean verdict requires that meaningful review actually ran.
-    complete: adjudication.ok && params.laneFailures === 0,
+    // Rule 12: a clean verdict requires that meaningful review actually ran —
+    // investigation, challenge, and adjudication alike.
+    complete: adjudication.ok && params.laneFailures === 0 && params.challengeFailures === 0,
   };
 
   const validation = validateVerdict(verdict);

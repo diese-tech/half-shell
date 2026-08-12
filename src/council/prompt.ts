@@ -45,8 +45,23 @@ export interface ContextRenderOptions {
   maxTotalChars?: number;
 }
 
-/** Renders the change itself: intent, metadata, and line-numbered diffs. */
-export function renderChange(context: ChangeContext, options: ContextRenderOptions): string {
+export interface RenderedChange {
+  text: string;
+  /** Files actually rendered into the prompt. */
+  includedPaths: string[];
+  /** Files the prompt budget pushed out, so coverage can stay honest. */
+  omitted: { path: string; reason: string }[];
+}
+
+/**
+ * Renders the change itself: intent, metadata, and line-numbered diffs.
+ * Anything the budget excludes is reported rather than silently dropped —
+ * a reviewer that never saw a file must not be counted as having reviewed it.
+ */
+export function renderChange(
+  context: ChangeContext,
+  options: ContextRenderOptions,
+): RenderedChange {
   const header = [
     `Repository: ${context.repo.owner}/${context.repo.repo}`,
     `Pull request: #${context.pullNumber} by ${context.author}`,
@@ -81,6 +96,9 @@ export function renderChange(context: ChangeContext, options: ContextRenderOptio
   const parts = [header.join('\n'), '', 'Changed files (line numbers are the head-side truth):'];
   let used = parts.join('\n').length;
 
+  const includedPaths: string[] = [];
+  const omitted: { path: string; reason: string }[] = [];
+
   for (const file of context.files) {
     const block = [
       '',
@@ -88,14 +106,23 @@ export function renderChange(context: ChangeContext, options: ContextRenderOptio
       annotatePatch(file.patch, options.maxPatchChars),
     ].join('\n');
     if (used + block.length > budget) {
-      parts.push('', `… remaining files omitted from this prompt for size …`);
-      break;
+      omitted.push({ path: file.path, reason: 'prompt budget exhausted' });
+      continue;
     }
     parts.push(block);
     used += block.length;
+    includedPaths.push(file.path);
   }
 
-  return parts.join('\n');
+  if (omitted.length > 0) {
+    parts.push(
+      '',
+      'Files omitted from this prompt for size (they were NOT reviewed):',
+      ...omitted.map((file) => `- ${file.path}`),
+    );
+  }
+
+  return { text: parts.join('\n'), includedPaths, omitted };
 }
 
 function escapeRegExp(value: string): string {

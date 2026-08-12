@@ -2,7 +2,7 @@ import type { Config } from './config.js';
 import { GitHubClient } from './github/client.js';
 import { buildChangeContext } from './github/context.js';
 import { buildDiffIndex } from './github/diff.js';
-import { findingKey, renderReview } from './github/publish.js';
+import { findingKey, findingMarker, renderReview } from './github/publish.js';
 import { log, errorFields } from './logger.js';
 import { runFollowUp, renderResolution } from './pipeline/followup.js';
 import { runReview } from './pipeline/review.js';
@@ -96,6 +96,7 @@ export class HalfShellApp {
     const { run, rationale } = await runReview(router, context, {
       depth: job.depth,
       maxPatchChars: this.config.review.maxPatchChars,
+      maxPromptChars: this.config.review.maxPromptChars,
     });
     await this.store.saveRun(run);
 
@@ -129,7 +130,9 @@ export class HalfShellApp {
     });
 
     // Recover the ids GitHub assigned so later replies can be answered in the
-    // right thread. The review endpoint only returns the review's own id.
+    // right thread. The review endpoint only returns the review's own id, and
+    // run-local ids like HS-001 repeat across runs, so match on the stable
+    // per-finding marker embedded in the comment body.
     const posted = await this.client
       .listReviewComments(job.installationId, job.repo, job.pullNumber)
       .catch(() => []);
@@ -143,8 +146,7 @@ export class HalfShellApp {
       file: finding.file,
       line: finding.line ?? null,
       claim: finding.claim,
-      commentId: posted.find((comment) => comment.body.includes(`Half-Shell · ${finding.finding_id}`))
-        ?.id,
+      commentId: posted.find((comment) => comment.body.includes(findingMarker(finding)))?.id,
       status: 'published',
       publishedAt: new Date().toISOString(),
     }));
@@ -162,6 +164,13 @@ export class HalfShellApp {
     }
 
     const target = selectTarget(published, job);
+    if (!target) {
+      log.info('reply is not in a Half-Shell thread; ignoring', {
+        pr: job.pullNumber,
+        comment: job.thread.commentId,
+      });
+      return;
+    }
     const context = await buildChangeContext(
       this.client,
       job.installationId,
@@ -241,16 +250,22 @@ export class HalfShellApp {
   }
 }
 
-/** Prefer the finding whose thread the reply landed in, then the same file. */
+/**
+ * Prefer the finding whose thread the reply landed in, then the same file.
+ * An implicit reply — no command, just a message in some review thread — only
+ * counts when its parent is a Half-Shell comment; otherwise unrelated
+ * discussion would consume inference and mutate finding state.
+ */
 function selectTarget(
   published: PublishedFindingRecord[],
   job: ReviewJob,
-): PublishedFindingRecord {
+): PublishedFindingRecord | undefined {
   const thread = job.thread;
   const byComment = thread?.inReplyToId
     ? published.find((record) => record.commentId === thread.inReplyToId)
     : undefined;
   if (byComment) return byComment;
+  if (thread?.implicit) return undefined;
 
   if (thread?.path) {
     const sameFile = published.filter((record) => record.file === thread.path);
@@ -264,5 +279,5 @@ function selectTarget(
       return nearest[0] as PublishedFindingRecord;
     }
   }
-  return published.at(-1) as PublishedFindingRecord;
+  return published.at(-1);
 }

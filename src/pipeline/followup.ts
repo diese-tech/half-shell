@@ -74,7 +74,7 @@ export async function runFollowUp(
     `Original evidence: ${input.evidence}`,
   ].join('\n');
 
-  const change = renderChange(input.context, { maxPatchChars: input.maxPatchChars });
+  const change = renderChange(input.context, { maxPatchChars: input.maxPatchChars }).text;
   const base = [
     untrusted('half_shell_finding', findingBlock),
     '',

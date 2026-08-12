@@ -53,6 +53,12 @@ export interface ReviewJob {
     author: string;
     path?: string;
     line?: number;
+    /**
+     * True when the reply carried no explicit command and was picked up only
+     * because it landed in a review thread. Such a job is dropped unless the
+     * parent comment is a known Half-Shell finding.
+     */
+    implicit?: boolean;
   };
 }
 

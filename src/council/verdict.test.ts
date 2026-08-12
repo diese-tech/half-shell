@@ -37,6 +37,7 @@ const BASE = {
   coverage: '1 changed file reviewed; no files omitted.',
   coverageLimitations: [],
   laneFailures: 0,
+  challengeFailures: 0,
 };
 
 describe('assembleVerdict', () => {

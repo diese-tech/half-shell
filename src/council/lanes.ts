@@ -3,10 +3,10 @@ import { parseJsonArray } from '../providers/json.js';
 import type { ProviderRouter } from '../providers/router.js';
 import type { Finding, Severity, Category } from '../protocol/types.js';
 import { validateFinding } from '../protocol/schema.js';
-import type { CandidateFinding, ChangeContext, LaneOutcome, ReviewDepth } from '../types.js';
+import type { CandidateFinding, LaneOutcome, ReviewDepth } from '../types.js';
 import { renderBrief, type ChangeBrief } from './briefing.js';
 import { INVESTIGATORS, type Persona } from './personas.js';
-import { renderChange, systemPrompt, untrusted, type ContextRenderOptions } from './prompt.js';
+import { systemPrompt, untrusted } from './prompt.js';
 
 const LANE_INSTRUCTION = [
   'Phase 2 — Independent lane review. You cannot see any other investigator.',
@@ -46,12 +46,10 @@ export interface LaneResult {
  */
 export async function runLanes(
   router: ProviderRouter,
-  context: ChangeContext,
+  change: string,
   brief: ChangeBrief,
-  render: ContextRenderOptions,
   depth: ReviewDepth,
 ): Promise<LaneResult> {
-  const change = renderChange(context, render);
   const user = [
     renderBrief(brief),
     '',

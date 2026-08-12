@@ -75,6 +75,34 @@ function scriptedProvider(findings: unknown[] = [FINDING]): Provider {
   };
 }
 
+/** Adds scripted follow-up answers on top of the review script. */
+function verifyingProvider(): Provider {
+  const base = scriptedProvider();
+  return {
+    id: 'scripted',
+    tier: 'local',
+    model: 'scripted',
+    async complete(request: CompletionRequest): Promise<CompletionResult> {
+      const instruction = request.system.split('</your_role>').at(-1) ?? '';
+      const reply = (text: string) => ({ text, provider: 'scripted', model: 'scripted' });
+
+      if (instruction.includes('Follow-up adjudication')) {
+        return reply(
+          JSON.stringify({
+            status: 'RESOLVED',
+            reasoning: 'the call site now passes tenantId',
+            evidence: 'src/loader.ts line 2',
+          }),
+        );
+      }
+      if (instruction.includes('Follow-up')) {
+        return reply('{"assessment": "fixed", "still_reachable": false}');
+      }
+      return base.complete(request);
+    },
+  };
+}
+
 interface PostedReview {
   body: string;
   comments?: ReviewComment[];
@@ -200,6 +228,7 @@ describe('HalfShellApp', () => {
       review: {
         maxFiles: 40,
         maxPatchChars: 5000,
+        maxPromptChars: 120_000,
         dryRun: false,
         dataDir,
         excludePatterns: [/(^|\/)package-lock\.json$/],
@@ -283,32 +312,7 @@ describe('HalfShellApp', () => {
   });
 
   it('answers a reply in the thread of the finding it belongs to', async () => {
-    const provider = scriptedProvider();
-    const verifying: Provider = {
-      id: 'scripted',
-      tier: 'local',
-      model: 'scripted',
-      async complete(request) {
-        const instruction = request.system.split('</your_role>').at(-1) ?? '';
-        if (instruction.includes('Follow-up adjudication')) {
-          return {
-            text: JSON.stringify({
-              status: 'RESOLVED',
-              reasoning: 'the call site now passes tenantId',
-              evidence: 'src/loader.ts line 2',
-            }),
-            provider: 'scripted',
-            model: 'scripted',
-          };
-        }
-        if (instruction.includes('Follow-up')) {
-          return { text: '{"assessment": "fixed", "still_reachable": false}', provider: 'scripted', model: 'scripted' };
-        }
-        return provider.complete(request);
-      },
-    };
-
-    const instance = app(verifying);
+    const instance = app(verifyingProvider());
     await instance.enqueue(openedPullRequest());
 
     const threadId = github.inlineComments[0]?.id as number;
@@ -344,6 +348,81 @@ describe('HalfShellApp', () => {
       12,
     );
     expect(resolutions[0]?.status).toBe('RESOLVED');
+  });
+
+  it('records the comment id by the finding marker, not a run-local id', async () => {
+    await app().enqueue(openedPullRequest());
+
+    const [record] = await new FileStore(dataDir).listPublished(
+      { owner: 'diese-tech', repo: 'half-shell' },
+      12,
+    );
+    const comment = github.inlineComments.find((entry) => entry.id === record?.commentId);
+
+    expect(comment).toBeDefined();
+    expect(comment?.body).toContain(`half-shell-finding:${record?.key}`);
+  });
+
+  it('ignores a reply in a review thread that is not its own', async () => {
+    const instance = app();
+    await instance.enqueue(openedPullRequest());
+
+    const strayReply = toReviewJob(
+      {
+        event: 'pull_request_review_comment',
+        deliveryId: 'delivery-4',
+        payload: {
+          action: 'created',
+          installation: { id: 7 },
+          sender: { login: 'another-reviewer' },
+          repository: REPO,
+          pull_request: { number: 12 },
+          comment: {
+            id: 6001,
+            // A thread started by someone else entirely.
+            in_reply_to_id: 55555,
+            body: 'Unrelated discussion about naming.',
+            path: 'src/loader.ts',
+            line: 2,
+          },
+        },
+      },
+      'half-shell[bot]',
+    )!;
+    await instance.enqueue(strayReply);
+
+    expect(github.replies).toHaveLength(0);
+    expect(github.comments).toHaveLength(0);
+  });
+
+  it('still answers an explicit command in someone else’s thread', async () => {
+    const instance = app(verifyingProvider());
+    await instance.enqueue(openedPullRequest());
+
+    const commanded = toReviewJob(
+      {
+        event: 'pull_request_review_comment',
+        deliveryId: 'delivery-5',
+        payload: {
+          action: 'created',
+          installation: { id: 7 },
+          sender: { login: 'dev' },
+          repository: REPO,
+          pull_request: { number: 12 },
+          comment: {
+            id: 6002,
+            in_reply_to_id: 55555,
+            body: '@half-shell verify',
+            path: 'src/loader.ts',
+            line: 2,
+          },
+        },
+      },
+      'half-shell[bot]',
+    )!;
+    await instance.enqueue(commanded);
+
+    expect(github.replies).toHaveLength(1);
   });
 
   it('honours dry run by keeping everything local', async () => {
