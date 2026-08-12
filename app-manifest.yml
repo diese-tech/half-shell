@@ -1,0 +1,37 @@
+# GitHub App manifest for Half-Shell.
+#
+# Register at: https://github.com/settings/apps/new
+# (or an organization's Settings → Developer settings → GitHub Apps → New)
+#
+# Replace HALF_SHELL_URL with the public base URL of the deployed service.
+# GitHub's manifest flow can consume this file directly; otherwise use it as
+# the checklist for filling in the form by hand.
+
+name: Half-Shell
+url: https://github.com/diese-tech/half-shell
+description: >-
+  Adversarial multi-agent pull request review. The Dojo reviews in specialist
+  lanes, spars over anonymous findings, and only findings that survive
+  adjudication are published.
+
+hook_attributes:
+  url: HALF_SHELL_URL/webhook
+  active: true
+
+redirect_url: HALF_SHELL_URL/healthz
+public: false
+
+default_events:
+  - pull_request
+  - issue_comment
+  - pull_request_review_comment
+
+default_permissions:
+  # Read the diff and post reviews, inline comments and thread replies.
+  pull_requests: write
+  # Read changed files, linked tests and repository engineering instructions.
+  contents: read
+  # Post and read pull request conversation comments.
+  issues: write
+  # Required for every installation.
+  metadata: read

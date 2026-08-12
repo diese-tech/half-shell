@@ -22,10 +22,17 @@ export interface CompletionRequest {
   maxTokens?: number;
 }
 
+export interface TokenUsage {
+  prompt: number;
+  completion: number;
+}
+
 export interface CompletionResult {
   text: string;
   provider: string;
   model: string;
+  /** Absent when the endpoint does not report usage. */
+  usage?: TokenUsage;
 }
 
 export interface Provider {

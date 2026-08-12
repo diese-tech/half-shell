@@ -26,3 +26,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Harness smoke run
+        run: npm run harness

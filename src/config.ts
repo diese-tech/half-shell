@@ -8,12 +8,20 @@ export interface GitHubConfig {
   apiBaseUrl: string;
 }
 
+export type StoreKind = 'file' | 'sqlite';
+
 export interface ReviewConfig {
   maxFiles: number;
   maxPatchChars: number;
   maxPromptChars: number;
+  maxRelatedFiles: number;
+  maxRelatedChars: number;
+  searchCallers: boolean;
   dryRun: boolean;
   dataDir: string;
+  store: StoreKind;
+  /** Database path when `store` is sqlite. */
+  databasePath: string;
   /** Paths excluded from review context (generated/vendored noise). */
   excludePatterns: RegExp[];
 }
@@ -22,6 +30,8 @@ export interface Config {
   port: number;
   github: GitHubConfig | undefined;
   providers: ProviderConfig[];
+  /** Providers named in the chain that could not be configured, and why. */
+  providerProblems: string[];
   allowPaidInference: boolean;
   review: ReviewConfig;
 }
@@ -88,18 +98,30 @@ function loadGitHub(): GitHubConfig | undefined {
   };
 }
 
-function loadProviders(): ProviderConfig[] {
+function loadProviders(): { providers: ProviderConfig[]; problems: string[] } {
   const ids = (env('HALF_SHELL_PROVIDERS') ?? 'ollama')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
 
   const providers: ProviderConfig[] = [];
+  const problems: string[] = [];
+
   for (const id of ids) {
     const key = id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
     const defaults = KNOWN_PROVIDERS[id.toLowerCase()] ?? {};
     const baseUrl = env(`HALF_SHELL_PROVIDER_${key}_BASE_URL`) ?? defaults.baseUrl;
     const model = env(`HALF_SHELL_PROVIDER_${key}_MODEL`) ?? defaults.model;
+
+    // Say exactly what is missing: a silently dropped provider is worse than
+    // a loud one, because the chain just gets quietly shorter.
+    const missing: string[] = [];
+    if (!baseUrl) missing.push(`HALF_SHELL_PROVIDER_${key}_BASE_URL`);
+    if (!model) missing.push(`HALF_SHELL_PROVIDER_${key}_MODEL`);
+    if (missing.length > 0) {
+      problems.push(`provider "${id}" is not usable; set ${missing.join(' and ')}`);
+      continue;
+    }
     if (!baseUrl || !model) continue;
     providers.push({
       id,
@@ -110,21 +132,30 @@ function loadProviders(): ProviderConfig[] {
       timeoutMs: int(`HALF_SHELL_PROVIDER_${key}_TIMEOUT_MS`, 120_000),
     });
   }
-  return providers;
+  return { providers, problems };
 }
 
 export function loadConfig(): Config {
+  const inference = loadProviders();
   return {
     port: int('PORT', 3000),
     github: loadGitHub(),
-    providers: loadProviders(),
+    providers: inference.providers,
+    providerProblems: inference.problems,
     allowPaidInference: bool('HALF_SHELL_ALLOW_PAID_INFERENCE', false),
     review: {
       maxFiles: int('HALF_SHELL_MAX_FILES', 40),
       maxPatchChars: int('HALF_SHELL_MAX_PATCH_CHARS', 12_000),
       maxPromptChars: int('HALF_SHELL_MAX_PROMPT_CHARS', 120_000),
+      maxRelatedFiles: Number(env('HALF_SHELL_MAX_RELATED_FILES') ?? 5),
+      maxRelatedChars: int('HALF_SHELL_MAX_RELATED_CHARS', 6_000),
+      searchCallers: bool('HALF_SHELL_SEARCH_CALLERS', true),
       dryRun: bool('HALF_SHELL_DRY_RUN', false),
       dataDir: env('HALF_SHELL_DATA_DIR') ?? '.half-shell',
+      store: env('HALF_SHELL_STORE') === 'sqlite' ? 'sqlite' : 'file',
+      databasePath:
+        env('HALF_SHELL_DATABASE_PATH') ??
+        `${env('HALF_SHELL_DATA_DIR') ?? '.half-shell'}/half-shell.db`,
       excludePatterns: DEFAULT_EXCLUDES,
     },
   };

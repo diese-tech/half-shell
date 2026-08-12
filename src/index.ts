@@ -10,8 +10,14 @@ if (!config.github) {
   log.error('missing GITHUB_APP_ID, GITHUB_PRIVATE_KEY or GITHUB_WEBHOOK_SECRET');
   process.exit(1);
 }
+for (const problem of config.providerProblems) {
+  log.warn('provider dropped from the chain', { problem });
+}
 if (config.providers.length === 0) {
-  log.error('no inference providers configured; set HALF_SHELL_PROVIDERS');
+  log.error('no usable inference providers', {
+    chain: process.env['HALF_SHELL_PROVIDERS'] ?? '(unset)',
+    problems: config.providerProblems,
+  });
   process.exit(1);
 }
 
@@ -30,7 +36,11 @@ server.listen(config.port, () => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    log.info('shutting down', { signal });
-    server.close(() => process.exit(0));
+    log.info('shutting down; draining in-flight reviews', { signal });
+    server.close(() => {
+      void app.idle().then(() => process.exit(0));
+    });
+    // Do not wait forever for a wedged provider call.
+    setTimeout(() => process.exit(0), 30_000).unref();
   });
 }

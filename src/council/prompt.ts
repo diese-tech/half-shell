@@ -1,5 +1,6 @@
 import { loadProtocolText, PROTOCOL_VERSION } from '../protocol/protocol.js';
 import { annotatePatch } from '../github/diff.js';
+import { renderRelatedFiles } from '../github/related.js';
 import type { ChangeContext } from '../types.js';
 import type { Persona } from './personas.js';
 
@@ -121,6 +122,9 @@ export function renderChange(
       ...omitted.map((file) => `- ${file.path}`),
     );
   }
+
+  const related = renderRelatedFiles(context.relatedFiles ?? []);
+  if (related && used + related.length <= budget) parts.push(related);
 
   return { text: parts.join('\n'), includedPaths, omitted };
 }

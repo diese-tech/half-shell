@@ -35,6 +35,7 @@ export async function runReview(
   options: ReviewOptions,
 ): Promise<ReviewResult> {
   const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
   const render = {
     maxPatchChars: options.maxPatchChars,
     maxTotalChars: options.maxPromptChars,
@@ -55,8 +56,20 @@ export async function runReview(
   }
   context.files = context.files.filter((file) => change.includedPaths.includes(file.path));
 
-  const brief = await buildBrief(router, context, change.text);
-  const { candidates, outcomes } = await runLanes(router, change.text, brief, options.depth);
+  const phaseMs: Record<string, number> = {};
+  const timed = async <T>(phase: string, work: () => Promise<T>): Promise<T> => {
+    const startedMs = Date.now();
+    try {
+      return await work();
+    } finally {
+      phaseMs[phase] = (phaseMs[phase] ?? 0) + (Date.now() - startedMs);
+    }
+  };
+
+  const brief = await timed('briefing', () => buildBrief(router, context, change.text));
+  const { candidates, outcomes } = await timed('lanes', () =>
+    runLanes(router, change.text, brief, options.depth),
+  );
 
   // Ground every claim in the real diff before the council spends effort on it.
   const anchored = anchorFindings(candidates, diffs);
@@ -68,8 +81,10 @@ export async function runReview(
   }
 
   const pool = buildAnonymousPool(anchored.kept);
-  const sparring = await runSparring(router, pool, brief);
-  const shredder = await runShredder(router, pool, brief, sparring.critiques);
+  const sparring = await timed('sparring', () => runSparring(router, pool, brief));
+  const shredder = await timed('shredder', () =>
+    runShredder(router, pool, brief, sparring.critiques),
+  );
 
   // A finding that never faced the adversarial pass has not survived review.
   const shredderFailed = !shredder.ok && pool.length > 0;
@@ -82,14 +97,16 @@ export async function runReview(
   }
   if (shredderFailed) coverageLimitations.push('The Shredder Challenge did not complete.');
 
-  const adjudication = await runVerdict(router, {
-    pool,
-    brief,
-    critiques: sparring.critiques,
-    shredder,
-    coverage,
-    coverageLimitations,
-  });
+  const adjudication = await timed('verdict', () =>
+    runVerdict(router, {
+      pool,
+      brief,
+      critiques: sparring.critiques,
+      shredder,
+      coverage,
+      coverageLimitations,
+    }),
+  );
 
   const { verdict, rationale } = assembleVerdict({
     pool,
@@ -114,6 +131,14 @@ export async function runReview(
     verdict,
     lanes: outcomes,
     providersUsed: router.used,
+    telemetry: {
+      durationMs: Date.now() - startedMs,
+      phaseMs,
+      providerCalls: router.stats.calls,
+      providerFailures: router.stats.failures,
+      promptTokens: router.stats.promptTokens,
+      completionTokens: router.stats.completionTokens,
+    },
   };
 
   log.info('review finished', {
@@ -121,6 +146,9 @@ export async function runReview(
     candidates: verdict.candidate_count,
     published: verdict.published_findings.length,
     complete: verdict.complete,
+    durationMs: run.telemetry.durationMs,
+    providerCalls: run.telemetry.providerCalls,
+    tokens: run.telemetry.promptTokens + run.telemetry.completionTokens,
   });
 
   return { run, pool, rationale };

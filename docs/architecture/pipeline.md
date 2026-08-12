@@ -16,6 +16,8 @@ Queue           →  src/app.ts           one in-flight job per pull request
         ↓
 Context builder →  src/github/context.ts bounded diff + intent + repo rules
         ↓
+Related context →  src/github/related.ts  covering tests and callers (background)
+        ↓
 Briefing        →  src/council/briefing.ts   Phase 1
         ↓
 Lanes           →  src/council/lanes.ts      Phase 2, concurrent, blind
@@ -58,6 +60,7 @@ council is not rerun.
 | Every pooled finding must be adjudicated | `verdict.ts` treats partial adjudication as a failed phase and publishes nothing |
 | Never silently use paid inference | `providers/router.ts` drops `paid` providers unless `HALF_SHELL_ALLOW_PAID_INFERENCE` is set |
 | Record the protocol version | every run and verdict carries `protocol_version` |
+| Related context is not reviewable | `related.ts` labels it explicitly and `anchor.ts` drops any finding against it |
 
 ## Inference routing
 
@@ -82,12 +85,63 @@ than a silently thinner review.
   known Half-Shell finding; unrelated review threads are left alone.
 - Reviews are posted as `COMMENT`. Half-Shell never approves or blocks a PR.
 
+## Related context
+
+Beyond the diff, the context builder pulls in the covering test for each
+changed file (by convention: `x.test.ts`, `x.spec.ts`, `__tests__/x`,
+`test_x.py`, mirrored `test/` trees) and, best-effort via code search, files
+that call the changed code. This is background: it is rendered under an
+explicit "NOT part of this change" banner, and diff anchoring already refuses
+to publish a finding against a file outside the diff. Code search is
+rate-limited and index-lagged, so any failure yields no context rather than a
+failed review. Tune with `HALF_SHELL_MAX_RELATED_FILES` (0 disables) and
+`HALF_SHELL_SEARCH_CALLERS`.
+
 ## Persistence
 
-`FileStore` keeps one JSON file per pull request under `HALF_SHELL_DATA_DIR`,
-holding the last 20 runs, published finding records, and resolutions. Writes
-are serialized per pull request. Swapping in a database means implementing the
-`Store` interface — nothing else changes.
+Two implementations of the same `Store` interface, selected with
+`HALF_SHELL_STORE`:
+
+- `file` (default) — one JSON file per pull request under `HALF_SHELL_DATA_DIR`,
+  with writes serialized per pull request. Fine for a single instance.
+- `sqlite` — a single database at `HALF_SHELL_DATABASE_PATH`, via Node's
+  built-in `node:sqlite`, so it costs no dependency. Use it when the deployment
+  outlives its container.
+
+Both keep the last 20 runs per pull request plus published findings and
+resolutions, and both are covered by the same test suite.
+
+## Telemetry
+
+Every run records wall-clock duration, per-phase timing, provider call and
+failure counts, and prompt/completion tokens where the endpoint reports them.
+Totals are logged when a review finishes and printed by `@half-shell explain`.
+A standard review costs roughly 15 provider calls: one briefing, six lanes, six
+Sparring passes, one Shredder challenge, one verdict.
+
+## Surviving a force-push
+
+A rebase moves code out from under an inline comment, and GitHub marks the
+original thread outdated. On re-review, a finding whose stable key was already
+published but whose anchor has moved gets a reply in its existing thread with
+the new location. This states location only — whether a finding is resolved
+stays Leonardo's call, reached through the follow-up path.
+
+## Running it without credentials
+
+`src/harness/` boots the real service against a stub GitHub and a stub
+OpenAI-compatible endpoint. Everything below the network boundary is production
+code: signature verification, App JWT signing, installation tokens, the council
+pipeline, publication and persistence.
+
+```bash
+npm run harness    # prints the review Half-Shell would post
+npm test           # includes the end-to-end suite
+```
+
+The stub inference server answers each phase from a script, so failure paths —
+a dead verdict phase, a failed Shredder challenge, a transient GitHub 500 — are
+all reproducible.
 
 ## Operating the service
 

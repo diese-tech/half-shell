@@ -62,11 +62,19 @@ export class OpenAICompatibleProvider implements Provider {
 
     const payload = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const text = payload.choices?.[0]?.message?.content;
     if (!text) throw new ProviderError(`${this.id} returned an empty completion`, this.id, true);
 
-    return { text, provider: this.id, model: this.config.model };
+    const usage = payload.usage
+      ? {
+          prompt: Number(payload.usage.prompt_tokens ?? 0),
+          completion: Number(payload.usage.completion_tokens ?? 0),
+        }
+      : undefined;
+
+    return { text, provider: this.id, model: this.config.model, usage };
   }
 
   private async send(body: Record<string, unknown>): Promise<Response> {
