@@ -171,8 +171,28 @@ The current planning target is approximately **20 complete PR reviews on a heavy
 - Support ongoing discussion and verification after the initial review.
 - Never silently use paid inference when free/local operation is expected.
 
+## Running it
+
+The pipeline above is implemented in `src/`. The runtime orchestrates; it does not invent review policy — it loads `skills/half-shell-review/v1/SKILL.md` and follows it.
+
+```bash
+npm ci
+npm run build
+npm start     # webhook listener: POST /webhook, GET /healthz
+```
+
+Review a real pull request from the terminal without posting anything:
+
+```bash
+node dist/cli.js --repo owner/name --pr 42 --installation 12345
+```
+
+Configuration lives in the environment; see [`.env.example`](./.env.example) for the GitHub App credentials, the ordered inference chain, and the review budget. Implementation details are in [`docs/architecture/pipeline.md`](./docs/architecture/pipeline.md).
+
 ## Status
 
-**Concept / architecture phase.**
+**First end-to-end implementation.**
 
-The next implementation milestone is to define the GitHub App architecture, webhook/event model, council orchestration contract, persistence schema, and provider interface before implementing the first end-to-end PR review.
+Implemented: webhook handling and signature verification, event/command routing, bounded context building, the six-phase council pipeline, diff-anchored finding validation, schema-checked structured output, provider fallback routing, GitHub publication, per-PR persistence, and follow-up verification.
+
+Not yet implemented: retrieval of related callers and tests beyond the diff, a database-backed store, review-thread mapping across force-pushes, and rate/cost telemetry.

@@ -39,6 +39,9 @@ The eventual GitHub App is responsible for orchestration rather than inventing r
 - persist finding and resolution state
 - route follow-up replies back through targeted verification
 
+The runtime implementation of these responsibilities is documented in
+[`pipeline.md`](./pipeline.md).
+
 ## Why authorship is hidden
 
 Persona specialization is useful during investigation, but identity should not become evidence during deliberation. An anonymous pool reduces anchoring while preserving independent corroboration as a useful signal.
