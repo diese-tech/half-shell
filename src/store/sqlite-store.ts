@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS resolutions (
   repo         TEXT NOT NULL,
   pull_number  INTEGER NOT NULL,
   finding_id   TEXT NOT NULL,
+  finding_key  TEXT NOT NULL,
   recorded_at  TEXT NOT NULL,
   payload      TEXT NOT NULL
 );
@@ -149,25 +150,28 @@ export class SqliteStore implements Store {
   async saveResolution(
     repo: RepoRef,
     pullNumber: number,
-    resolution: Resolution & { commentId?: number },
+    resolution: Resolution,
+    findingKey: string,
   ): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO resolutions (owner, repo, pull_number, finding_id, recorded_at, payload)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO resolutions (owner, repo, pull_number, finding_id, finding_key, recorded_at, payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         repo.owner,
         repo.repo,
         pullNumber,
         resolution.finding_id,
+        findingKey,
         new Date().toISOString(),
-        JSON.stringify(resolution),
+        JSON.stringify({ ...resolution, findingKey }),
       );
 
     // Mirror the resolution onto the published record, as FileStore does.
+    // Matched on the stable key: finding_id repeats across runs.
     const published = await this.listPublished(repo, pullNumber);
-    const record = published.find((entry) => entry.findingId === resolution.finding_id);
+    const record = published.find((entry) => entry.key === findingKey);
     if (record) {
       record.status = mapStatus(resolution.status);
       await this.savePublished([record]);

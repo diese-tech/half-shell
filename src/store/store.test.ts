@@ -123,11 +123,12 @@ describe.each([
 
   it('records a resolution and reflects it on the published finding', async () => {
     await store.savePublished([record('key-1')]);
-    await store.saveResolution(repo, 42, {
-      finding_id: 'HS-001',
-      status: 'RESOLVED',
-      reasoning: 'fixed in the latest push',
-    });
+    await store.saveResolution(
+      repo,
+      42,
+      { finding_id: 'HS-001', status: 'RESOLVED', reasoning: 'fixed in the latest push' },
+      'key-1',
+    );
 
     const resolutions = await store.listResolutions(repo, 42);
     expect(resolutions).toHaveLength(1);
@@ -135,6 +136,26 @@ describe.each([
 
     const published = await store.listPublished(repo, 42);
     expect(published[0]?.status).toBe('resolved');
+  });
+
+  it('resolves the right finding when two runs share a run-local id', async () => {
+    // Both were published as HS-001 on different runs; only the keys differ.
+    await store.savePublished([
+      { ...record('key-first'), findingId: 'HS-001', claim: 'the first finding' },
+      { ...record('key-second'), findingId: 'HS-001', claim: 'the second finding' },
+    ]);
+
+    await store.saveResolution(
+      repo,
+      42,
+      { finding_id: 'HS-001', status: 'RESOLVED', reasoning: 'the second one was fixed' },
+      'key-second',
+    );
+
+    const published = await store.listPublished(repo, 42);
+    expect(published.find((entry) => entry.key === 'key-second')?.status).toBe('resolved');
+    // The unrelated finding keeps standing.
+    expect(published.find((entry) => entry.key === 'key-first')?.status).toBe('published');
   });
 
   it('keeps pull requests separate', async () => {

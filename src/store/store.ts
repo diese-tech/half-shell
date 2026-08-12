@@ -10,18 +10,29 @@ export interface Store {
   listRuns(repo: RepoRef, pullNumber: number): Promise<ReviewRun[]>;
   savePublished(records: PublishedFindingRecord[]): Promise<void>;
   listPublished(repo: RepoRef, pullNumber: number): Promise<PublishedFindingRecord[]>;
+  /**
+   * `findingKey` identifies which published record this resolves. The
+   * protocol's `finding_id` is only unique within one run — `HS-001` recurs
+   * on every review — so it cannot be used to find the record.
+   */
   saveResolution(
     repo: RepoRef,
     pullNumber: number,
-    resolution: Resolution & { commentId?: number },
+    resolution: Resolution,
+    findingKey: string,
   ): Promise<void>;
   listResolutions(repo: RepoRef, pullNumber: number): Promise<Resolution[]>;
+}
+
+interface StoredResolution extends Resolution {
+  /** Stable key of the published record this resolution belongs to. */
+  findingKey: string;
 }
 
 interface PullState {
   runs: ReviewRun[];
   published: PublishedFindingRecord[];
-  resolutions: (Resolution & { commentId?: number })[];
+  resolutions: StoredResolution[];
 }
 
 const EMPTY: PullState = { runs: [], published: [], resolutions: [] };
@@ -104,11 +115,12 @@ export class FileStore implements Store {
   async saveResolution(
     repo: RepoRef,
     pullNumber: number,
-    resolution: Resolution & { commentId?: number },
+    resolution: Resolution,
+    findingKey: string,
   ): Promise<void> {
     await this.update(repo, pullNumber, (state) => {
-      state.resolutions.push(resolution);
-      const record = state.published.find((entry) => entry.findingId === resolution.finding_id);
+      state.resolutions.push({ ...resolution, findingKey });
+      const record = state.published.find((entry) => entry.key === findingKey);
       if (record) record.status = mapStatus(resolution.status);
     });
   }

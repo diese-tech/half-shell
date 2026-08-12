@@ -84,6 +84,11 @@ than a silently thinner review.
 - A reply carrying no command is verified only when its parent comment is a
   known Half-Shell finding; unrelated review threads are left alone.
 - Reviews are posted as `COMMENT`. Half-Shell never approves or blocks a PR.
+- Writes are never replayed after an ambiguous failure. GitHub rejects a
+  rate-limited request before acting on it, so those are retried; a 5xx or a
+  lost connection on a `POST` might mean the review landed, so Half-Shell fails
+  that run rather than risk a duplicate review. The finding is not recorded as
+  published, so the next push or `@half-shell review` posts it.
 
 ## Related context
 
@@ -110,6 +115,10 @@ Two implementations of the same `Store` interface, selected with
 
 Both keep the last 20 runs per pull request plus published findings and
 resolutions, and both are covered by the same test suite.
+
+Finding state is keyed by the stable finding hash, never by the protocol's
+`finding_id` — `HS-001` recurs on every run, so resolving a finding by that id
+would mark whichever finding happened to be first.
 
 ## Telemetry
 

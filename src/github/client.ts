@@ -20,36 +20,46 @@ function delay(ms: number): Promise<void> {
 
 /**
  * How long to wait before retrying, or undefined when the failure is not
- * worth retrying. Covers 5xx, 429, and the 403 forms GitHub uses for primary
- * and secondary rate limits.
+ * worth retrying.
+ *
+ * Rate limiting (429, and the two 403 forms) is rejected before GitHub does
+ * any work, so it is always safe to retry. A 5xx is ambiguous — the write may
+ * well have landed — so it is only retried for reads. Retrying a POST there
+ * would risk a second review or a duplicate reply, which is exactly the noise
+ * this service exists to avoid.
  */
 export function retryDelayMs(
   response: { status: number; headers: { get(name: string): string | null } },
   detail: string,
   attempt: number,
+  idempotent: boolean,
 ): number | undefined {
+  const rateLimited =
+    response.status === 429 ||
+    (response.status === 403 &&
+      (/secondary rate limit/i.test(detail) ||
+        response.headers.get('x-ratelimit-remaining') === '0'));
+
+  if (!rateLimited) {
+    return response.status >= 500 && idempotent ? backoffMs(attempt) : undefined;
+  }
+
   const retryAfter = Number(response.headers.get('retry-after'));
   if (Number.isFinite(retryAfter) && retryAfter > 0) {
     return Math.min(retryAfter * 1000, 60_000);
   }
 
-  if (response.status >= 500) return backoffMs(attempt);
-  if (response.status === 429) return backoffMs(attempt);
-
-  if (response.status === 403) {
-    if (/secondary rate limit/i.test(detail)) return backoffMs(attempt);
-    if (response.headers.get('x-ratelimit-remaining') === '0') {
-      const reset = Number(response.headers.get('x-ratelimit-reset'));
-      if (Number.isFinite(reset) && reset > 0) {
-        const waitMs = reset * 1000 - Date.now();
-        // Only wait out a primary rate limit if it clears reasonably soon.
-        if (waitMs > 0 && waitMs <= 60_000) return waitMs;
-      }
-      return undefined;
+  if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
+    const reset = Number(response.headers.get('x-ratelimit-reset'));
+    if (Number.isFinite(reset) && reset > 0) {
+      const waitMs = reset * 1000 - Date.now();
+      // Only wait out a primary rate limit if it clears reasonably soon.
+      return waitMs > 0 && waitMs <= 60_000 ? waitMs : undefined;
     }
+    return undefined;
   }
 
-  return undefined;
+  return backoffMs(attempt);
 }
 
 /** App-level JWT used to exchange for short-lived installation tokens. */
@@ -118,6 +128,9 @@ export class GitHubClient {
   ): Promise<T> {
     let lastDetail = '';
     let lastStatus = 0;
+    // A failed write may still have been applied, so only reads are replayed
+    // on an ambiguous failure.
+    const idempotent = method === 'GET';
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const token = await this.installationToken(installationId);
@@ -135,9 +148,10 @@ export class GitHubClient {
           signal: AbortSignal.timeout(30_000),
         });
       } catch (error) {
-        // Network failure or timeout: worth one more try.
+        // A network failure or timeout on a write is ambiguous: GitHub may
+        // have processed it and lost the response. Only reads are replayed.
         lastDetail = error instanceof Error ? error.message : String(error);
-        if (attempt === MAX_ATTEMPTS) break;
+        if (!idempotent || attempt === MAX_ATTEMPTS) break;
         await delay(backoffMs(attempt));
         continue;
       }
@@ -150,7 +164,7 @@ export class GitHubClient {
       lastStatus = response.status;
       lastDetail = (await response.text().catch(() => '')).slice(0, 500);
 
-      const wait = retryDelayMs(response, lastDetail, attempt);
+      const wait = retryDelayMs(response, lastDetail, attempt, idempotent);
       if (wait === undefined || attempt === MAX_ATTEMPTS) break;
       log.warn('retrying GitHub request', {
         method,

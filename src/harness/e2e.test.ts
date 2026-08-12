@@ -214,6 +214,24 @@ describe('end to end', () => {
     expect(harness.github.reviews[0]?.comments).toHaveLength(1);
   }, 30_000);
 
+  it('never re-posts a review after an ambiguous write failure', async () => {
+    harness = await startHarness();
+    // A 500 on the write: GitHub may have posted it and lost the response.
+    harness.github.failures.set('POST /repos/diese-tech/half-shell/pulls/42/reviews', {
+      status: 500,
+      times: 1,
+    });
+
+    await harness.deliver('pull_request', pullRequestEvent('opened'));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    const attempts = harness.github.requests.filter(
+      (request) => request.method === 'POST' && request.path.endsWith('/reviews'),
+    );
+    expect(attempts).toHaveLength(1);
+    expect(harness.github.reviews).toHaveLength(0);
+  });
+
   it('gives up on a GitHub failure that is not retryable', async () => {
     harness = await startHarness();
     harness.github.failures.set('GET /repos/diese-tech/half-shell/pulls/42', {

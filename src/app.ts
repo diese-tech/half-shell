@@ -261,7 +261,7 @@ export class HalfShellApp {
     });
     if (!resolution) return;
 
-    await this.store.saveResolution(job.repo, job.pullNumber, resolution);
+    await this.store.saveResolution(job.repo, job.pullNumber, resolution, target.key);
 
     if (this.config.review.dryRun) {
       log.info('dry run; resolution not posted', { pr: job.pullNumber, resolution });
