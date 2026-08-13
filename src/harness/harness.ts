@@ -18,9 +18,13 @@ import { defaultScript, SAMPLE_PULL_REQUEST } from './fixtures.js';
  * verification, App JWT signing, installation tokens, the council pipeline,
  * publication and persistence.
  */
+/** The stub GitHub repo every harness webhook payload is addressed to. */
+export const HARNESS_REPO = { owner: 'diese-tech', repo: 'half-shell' };
+
 export interface Harness {
   github: StubGitHub;
   inference: StubInference;
+  app: HalfShellApp;
   webhookUrl: string;
   config: Config;
   /** Deliver a signed webhook exactly as GitHub would. */
@@ -85,6 +89,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   return {
     github,
     inference,
+    app,
     webhookUrl,
     config,
     async deliver(event, payload) {
