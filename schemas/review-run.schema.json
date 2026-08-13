@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/orchestration/v1/review-run.schema.json",
+  "title": "Half-Shell Council Review Run v1",
+  "description": "A single review generation, keyed by repository + pull request + head SHA. See Issue #12 section 3 (webhook identity) and section 2 (lifecycle).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "repository_id",
+    "repository_full_name",
+    "pull_request_number",
+    "base_sha",
+    "head_sha",
+    "status",
+    "current_phase",
+    "generation",
+    "trigger",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "repository_id": { "type": "string", "minLength": 1 },
+    "repository_full_name": { "type": "string", "minLength": 1, "pattern": "^[^/]+/[^/]+$" },
+    "pull_request_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "minLength": 1 },
+    "head_sha": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "description": "Coarse lifecycle status. \"running\" means current_phase is the authoritative pointer; the other five are terminal.",
+      "enum": ["running", "archived", "failed_retryable", "failed_final", "cancelled", "superseded"]
+    },
+    "current_phase": {
+      "type": "string",
+      "enum": [
+        "RECEIVED",
+        "CASE_FILE",
+        "INDEPENDENT_REVIEW",
+        "MENTORSHIP",
+        "SYNTHESIS",
+        "SPARRING",
+        "LEO_REVIEW",
+        "PUBLICATION",
+        "ARCHIVED"
+      ]
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Increments per distinct head_sha seen for this pull request. A newer generation supersedes an older, still-running one."
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["webhook", "manual", "retry", "reopened"]
+    },
+    "superseded_by_review_id": { "type": ["string", "null"] },
+    "github_delivery_id": {
+      "type": ["string", "null"],
+      "description": "GitHub's X-GitHub-Delivery header, persisted for webhook idempotency."
+    },
+    "provider_usage": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-persona provider/model usage, keyed by persona codename."
+    },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "completion_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cost_estimate": { "type": ["number", "null"], "minimum": 0 },
+    "error": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

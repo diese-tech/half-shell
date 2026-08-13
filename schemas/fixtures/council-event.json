@@ -1,0 +1,12 @@
+{
+  "id": "evt_01J8Z9K5SJ9X8T4Z6P7Q8R9S0T",
+  "review_id": "rev_01J8Z9K3QG7V6R2X4M5N6P7Q8R",
+  "sequence": 42,
+  "phase": "SPARRING",
+  "actor": "shredder",
+  "event_type": "challenge",
+  "finding_id": "finding_01J8Z9K4RH8W7S3Y5N6P7Q8R9S",
+  "content": "You have shown possibility. Not impact.",
+  "metadata": { "challenge_category": "impact" },
+  "created_at": "2026-08-13T06:03:11.000Z"
+}

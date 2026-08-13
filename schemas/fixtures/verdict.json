@@ -1,0 +1,16 @@
+{
+  "review_id": "rev_01J8Z9K3QG7V6R2X4M5N6P7Q8R",
+  "reviewer": "leonardo",
+  "overall_outcome": "blocking_findings_published",
+  "rationale": "One stale call site fails on every import. The rest of the change is sound.",
+  "findings": [
+    {
+      "finding_id": "finding_01J8Z9K4RH8W7S3Y5N6P7Q8R9S",
+      "outcome": "publish",
+      "final_severity": "high",
+      "public_reason": "importRecords still calls load() without the now-required tenant id, so every import throws at runtime."
+    }
+  ],
+  "unresolved_uncertainty": [],
+  "created_at": "2026-08-13T06:04:00.000Z"
+}
