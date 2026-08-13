@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import type { Config } from '../config.js';
 import { defaultScript } from './fixtures.js';
 import { pullRequestEvent, startHarness } from './harness.js';
 
@@ -10,9 +11,34 @@ import { pullRequestEvent, startHarness } from './harness.js';
  *
  * Use it to see the shape of a review, or to sanity-check the pipeline after
  * a change without waiting on a real provider.
+ *
+ * Set HALF_SHELL_HARNESS_OLLAMA_MODEL to swap the stub inference server for a
+ * real local Ollama model — GitHub stays stubbed, so this still needs no
+ * credentials. Ollama's own server must already be running and have that
+ * model pulled:
+ *
+ *   HALF_SHELL_HARNESS_OLLAMA_MODEL=qwen2.5:7b npm run harness
+ *
+ * A real model is far slower than the stub, so both the per-call timeout and
+ * the wait for the review to finish are widened when this is set.
  */
 async function main(): Promise<number> {
-  const harness = await startHarness({ script: defaultScript() });
+  const ollamaModel = process.env['HALF_SHELL_HARNESS_OLLAMA_MODEL'];
+  const configure = ollamaModel
+    ? (config: Config): void => {
+        config.providers = [
+          {
+            id: 'ollama',
+            tier: 'local',
+            baseUrl: process.env['HALF_SHELL_HARNESS_OLLAMA_URL'] ?? 'http://127.0.0.1:11434/v1',
+            model: ollamaModel,
+            timeoutMs: 10 * 60_000,
+          },
+        ];
+      }
+    : undefined;
+
+  const harness = await startHarness({ script: defaultScript(), configure });
   try {
     process.stdout.write(`stub GitHub:    ${harness.github.url}\n`);
     process.stdout.write(`stub inference: ${harness.inference.url}\n`);
@@ -20,7 +46,11 @@ async function main(): Promise<number> {
 
     const started = Date.now();
     await harness.deliver('pull_request', pullRequestEvent('opened'));
-    await harness.waitFor(() => harness.github.reviews.length > 0, 'the review to be posted');
+    await harness.waitFor(
+      () => harness.github.reviews.length > 0,
+      'the review to be posted',
+      ollamaModel ? 30 * 60_000 : undefined,
+    );
 
     const review = harness.github.reviews[0];
     if (!review) return 1;
