@@ -101,6 +101,31 @@ describe('validatePersona', () => {
     expect(valid).toBe(false);
     expect(errors.some((e) => e.includes('hard_rules'))).toBe(true);
   });
+
+  it('rejects a numeric temperament value even though it is scalar', () => {
+    // Caught by Codex on PR #13: PersonaConfig types temperament as
+    // Record<string, string>, so a number here would make loadPersonaFile's
+    // cast unsound for any caller that trusts the type.
+    const { valid, errors } = validatePersona(validPersona({ temperament: { calm: 1 } }));
+    expect(valid).toBe(false);
+    expect(errors.some((e) => e.includes('temperament'))).toBe(true);
+  });
+
+  it('rejects a null entry in hard_rules', () => {
+    const { valid, errors } = validatePersona(
+      validPersona({ hard_rules: ['never_directly_mutate_github_state', null] }),
+    );
+    expect(valid).toBe(false);
+    expect(errors.some((e) => e.includes('hard_rules'))).toBe(true);
+  });
+
+  it('rejects a non-string allowed_outcomes value', () => {
+    const { valid, errors } = validatePersona(
+      validPersona({ allowed_outcomes: { submit_finding: 42 } }),
+    );
+    expect(valid).toBe(false);
+    expect(errors.some((e) => e.includes('allowed_outcomes'))).toBe(true);
+  });
 });
 
 describe('loadPersonaFile', () => {

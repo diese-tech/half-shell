@@ -42,30 +42,43 @@ export function validatePersona(value: unknown): { valid: boolean; errors: strin
     errors.push(`role "${record['role']}" is not one of: ${KNOWN_ROLES.join(', ')}`);
   }
 
+  // PersonaConfig types temperament as Record<string, string>: every value
+  // must actually be a string, not merely scalar, or a caller that trusts
+  // the type (e.g. rendering it straight into a prompt) gets an unsound
+  // object out of a "valid" persona.
   const temperament = record['temperament'];
   if (typeof temperament !== 'object' || temperament === null || Array.isArray(temperament)) {
     errors.push('missing "temperament" mapping');
   } else {
-    const bad = Object.entries(temperament as Record<string, unknown>).filter(
-      ([, v]) => typeof v !== 'string' && typeof v !== 'number',
-    );
-    if (Object.keys(temperament as object).length === 0) {
+    const entries = Object.entries(temperament as Record<string, unknown>);
+    const bad = entries.filter(([, v]) => typeof v !== 'string' || v.trim() === '');
+    if (entries.length === 0) {
       errors.push('"temperament" must not be empty');
     }
     if (bad.length > 0) {
-      errors.push(`"temperament" values must be scalar (machine-readable): ${bad.map(([k]) => k).join(', ')}`);
+      errors.push(`"temperament" values must be non-empty strings (machine-readable): ${bad.map(([k]) => k).join(', ')}`);
     }
   }
 
   const allowedOutcomes = record['allowed_outcomes'];
   if (typeof allowedOutcomes !== 'object' || allowedOutcomes === null || Array.isArray(allowedOutcomes)) {
     errors.push('missing "allowed_outcomes" mapping');
-  } else if (Object.keys(allowedOutcomes as object).length === 0) {
-    errors.push('"allowed_outcomes" must not be empty');
+  } else {
+    const entries = Object.entries(allowedOutcomes as Record<string, unknown>);
+    const bad = entries.filter(([, v]) => typeof v !== 'string' || v.trim() === '');
+    if (entries.length === 0) {
+      errors.push('"allowed_outcomes" must not be empty');
+    }
+    if (bad.length > 0) {
+      errors.push(`"allowed_outcomes" values must be non-empty strings: ${bad.map(([k]) => k).join(', ')}`);
+    }
   }
 
-  if (!Array.isArray(record['hard_rules']) || (record['hard_rules'] as unknown[]).length === 0) {
+  const hardRules = record['hard_rules'];
+  if (!Array.isArray(hardRules) || hardRules.length === 0) {
     errors.push('missing or empty "hard_rules" list');
+  } else if (hardRules.some((rule) => typeof rule !== 'string' || rule.trim() === '')) {
+    errors.push('"hard_rules" must be a list of non-empty strings');
   }
 
   const boundary = record['authority_boundary'];
