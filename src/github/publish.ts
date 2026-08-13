@@ -58,7 +58,9 @@ export function findMovedFindings(
 export function renderMovedComment(finding: Finding, headSha: string): string {
   const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
   return [
-    `Still applies after the latest push, now at \`${location}\`.`,
+    // States the new location without asserting that a push happened: the
+    // trigger is a moved anchor, which is not the same thing as a new commit.
+    `Still applies. The code this refers to is now at \`${location}\`.`,
     '',
     `**Claim.** ${finding.claim}`,
     '',
@@ -111,6 +113,9 @@ export function renderReview(
 ): RenderedReview {
   const comments: ReviewComment[] = [];
   const unanchored: Finding[] = [];
+  // Kept separate from `unanchored`: these findings have a perfectly good
+  // anchor, they just exceeded the inline budget. Saying otherwise is a lie.
+  const overCap: Finding[] = [];
 
   // Highest severity first, so the cap sheds the least important findings.
   const ordered = [...verdict.published_findings].sort(
@@ -119,7 +124,7 @@ export function renderReview(
 
   for (const finding of ordered) {
     if (comments.length >= MAX_INLINE_COMMENTS) {
-      unanchored.push(finding);
+      overCap.push(finding);
       continue;
     }
     const diff = diffs.get(finding.file);
@@ -144,13 +149,14 @@ export function renderReview(
     }
   }
 
-  return { body: renderBody(context, verdict, unanchored, rationale), comments };
+  return { body: renderBody(context, verdict, unanchored, overCap, rationale), comments };
 }
 
 function renderBody(
   context: ChangeContext,
   verdict: Verdict,
   unanchored: Finding[],
+  overCap: Finding[],
   rationale: Map<string, string>,
 ): string {
   const published = verdict.published_findings.length;
@@ -176,6 +182,23 @@ function renderBody(
   if (unanchored.length > 0) {
     sections.push('### Findings without a safe line anchor', '');
     for (const finding of unanchored) {
+      sections.push(
+        `- **${finding.file}** — ${renderFindingComment(finding, rationale.get(finding.finding_id))
+          .split('\n')
+          .join('\n  ')}`,
+      );
+    }
+    sections.push('');
+  }
+
+  if (overCap.length > 0) {
+    sections.push(
+      `### Further findings beyond the ${MAX_INLINE_COMMENTS}-comment inline limit`,
+      '',
+      'These have a valid line anchor but exceeded the per-review inline budget.',
+      '',
+    );
+    for (const finding of overCap) {
       sections.push(
         `- **${finding.file}** — ${renderFindingComment(finding, rationale.get(finding.finding_id))
           .split('\n')

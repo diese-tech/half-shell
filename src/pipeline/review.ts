@@ -3,6 +3,7 @@ import { runLanes } from '../council/lanes.js';
 import { buildAnonymousPool } from '../council/pool.js';
 import { runShredder, runSparring } from '../council/sparring.js';
 import { renderChange } from '../council/prompt.js';
+import { relatedPaths } from '../github/related.js';
 import { assembleVerdict, runVerdict } from '../council/verdict.js';
 import { describeCoverage } from '../github/context.js';
 import { buildDiffIndex } from '../github/diff.js';
@@ -72,7 +73,7 @@ export async function runReview(
   );
 
   // Ground every claim in the real diff before the council spends effort on it.
-  const anchored = anchorFindings(candidates, diffs);
+  const anchored = anchorFindings(candidates, diffs, relatedPaths(context.relatedFiles ?? []));
   for (const drop of anchored.dropped) {
     log.info('finding rejected before deliberation', {
       file: drop.finding.file,

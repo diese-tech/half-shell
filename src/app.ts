@@ -194,20 +194,23 @@ export class HalfShellApp {
     for (const { record, finding } of moved) {
       const body = renderMovedComment(finding, headSha);
       if (this.config.review.dryRun) {
+        // The stored anchor is a receipt for a notice that was posted. Advancing
+        // it here would make the next real run think the move was already
+        // reported, destroying the notice rather than deferring it.
         log.info('dry run; move notice not posted', { pr: job.pullNumber, body });
-      } else {
-        try {
-          await this.client.replyToReviewComment(
-            job.installationId,
-            job.repo,
-            job.pullNumber,
-            record.commentId as number,
-            body,
-          );
-        } catch (error) {
-          log.warn('could not re-anchor a moved finding', errorFields(error));
-          continue;
-        }
+        continue;
+      }
+      try {
+        await this.client.replyToReviewComment(
+          job.installationId,
+          job.repo,
+          job.pullNumber,
+          record.commentId as number,
+          body,
+        );
+      } catch (error) {
+        log.warn('could not re-anchor a moved finding', errorFields(error));
+        continue;
       }
       await this.store.savePublished([
         { ...record, file: finding.file, line: finding.line ?? null, headSha },
@@ -261,12 +264,15 @@ export class HalfShellApp {
     });
     if (!resolution) return;
 
-    await this.store.saveResolution(job.repo, job.pullNumber, resolution, target.key);
-
     if (this.config.review.dryRun) {
+      // Recording the resolution would mark the finding resolved or withdrawn,
+      // which findMovedFindings then skips permanently — a durable state change
+      // for a reply that was never sent.
       log.info('dry run; resolution not posted', { pr: job.pullNumber, resolution });
       return;
     }
+
+    await this.store.saveResolution(job.repo, job.pullNumber, resolution, target.key);
 
     const body = renderResolution(resolution);
     const replyTo = job.thread.inReplyToId ?? target.commentId;
@@ -370,5 +376,7 @@ function selectTarget(
       return nearest[0] as PublishedFindingRecord;
     }
   }
-  return published.at(-1);
+  // Most recently published, stated explicitly rather than inferred from
+  // storage order — the two stores do not order listPublished identically.
+  return [...published].sort((a, b) => a.publishedAt.localeCompare(b.publishedAt)).at(-1);
 }

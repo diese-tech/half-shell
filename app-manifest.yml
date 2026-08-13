@@ -4,8 +4,11 @@
 # (or an organization's Settings → Developer settings → GitHub Apps → New)
 #
 # Replace HALF_SHELL_URL with the public base URL of the deployed service.
-# GitHub's manifest flow can consume this file directly; otherwise use it as
-# the checklist for filling in the form by hand.
+#
+# This is a CHECKLIST for filling in that form by hand. GitHub's App-manifest
+# flow takes a JSON manifest POSTed from an HTML form, not a YAML file from a
+# repository, and Half-Shell implements no manifest-conversion endpoint — so
+# there is no automated path that consumes this file.
 
 name: Half-Shell
 url: https://github.com/diese-tech/half-shell
@@ -18,7 +21,9 @@ hook_attributes:
   url: HALF_SHELL_URL/webhook
   active: true
 
-redirect_url: HALF_SHELL_URL/healthz
+# No redirect_url: Half-Shell has no endpoint that handles the manifest
+# conversion code, so pointing one at the service would send that credential
+# to a 404 and into the request logs.
 public: false
 
 default_events:

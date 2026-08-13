@@ -11,6 +11,13 @@ import type { GitHubClient } from './client.js';
 export interface RelatedOptions {
   maxFiles: number;
   maxCharsPerFile: number;
+  /**
+   * Ceiling on GitHub requests this gather may issue. The file budget bounds
+   * results, not work: a repository whose tests do not match the conventions
+   * below never fills it, so without a request ceiling the cost is highest
+   * exactly where the return is zero.
+   */
+  maxLookups: number;
   /** Code search is rate-limited and index-lagged; it degrades silently. */
   searchCallers: boolean;
 }
@@ -54,11 +61,20 @@ export async function gatherRelatedFiles(
   ref: string,
   options: RelatedOptions,
 ): Promise<RelatedFile[]> {
-  if (options.maxFiles <= 0) return [];
+  if (options.maxFiles <= 0 || options.maxLookups <= 0) return [];
 
   const excluded = changedPaths(files);
   const related: RelatedFile[] = [];
   const seen = new Set<string>();
+
+  // Every GitHub request this gather issues is counted, not just the ones
+  // that returned something.
+  let lookups = 0;
+  const spent = (): boolean => lookups >= options.maxLookups;
+  const fetchContent = async (path: string): Promise<string | undefined> => {
+    lookups += 1;
+    return client.getFileContent(installationId, repo, path, ref);
+  };
 
   const add = (path: string, reason: RelatedFile['reason'], content: string): void => {
     if (related.length >= options.maxFiles || seen.has(path) || excluded.has(path)) return;
@@ -76,11 +92,11 @@ export async function gatherRelatedFiles(
 
   // Tests first: they are precise, cheap, and the most useful missing context.
   for (const file of files) {
-    if (related.length >= options.maxFiles) break;
+    if (related.length >= options.maxFiles || spent()) break;
     if (isTestPath(file.path)) continue;
     for (const candidate of testCandidates(file.path)) {
-      if (excluded.has(candidate)) break;
-      const content = await client.getFileContent(installationId, repo, candidate, ref);
+      if (excluded.has(candidate) || spent()) break;
+      const content = await fetchContent(candidate);
       if (content) {
         add(candidate, 'covering test', content);
         break;
@@ -90,14 +106,29 @@ export async function gatherRelatedFiles(
 
   if (options.searchCallers) {
     for (const file of files) {
-      if (related.length >= options.maxFiles) break;
-      const callers = await findCallers(client, installationId, repo, file.path, excluded);
-      for (const caller of callers) {
-        if (related.length >= options.maxFiles) break;
-        const content = await client.getFileContent(installationId, repo, caller, ref);
-        if (content) add(caller, 'calls changed code', content);
+      if (related.length >= options.maxFiles || spent()) break;
+      lookups += 1;
+      const search = await findCallers(client, installationId, repo, file.path, excluded);
+      // One rejection means the quota is gone or the endpoint is closed to us.
+      // Retrying it per file buys nothing and can block the review.
+      if (!search.ok) {
+        log.info('caller search unavailable; skipping it for this run', { file: file.path });
+        break;
+      }
+      for (const caller of search.paths) {
+        if (related.length >= options.maxFiles || spent()) break;
+        const content = await fetchContent(caller);
+        if (content) add(caller, 'mentions the changed file', content);
       }
     }
+  }
+
+  if (spent()) {
+    log.info('related-context lookup budget exhausted', {
+      lookups,
+      budget: options.maxLookups,
+      collected: related.length,
+    });
   }
 
   return related;
@@ -108,8 +139,12 @@ function isTestPath(path: string): boolean {
 }
 
 /**
- * Best-effort caller lookup through code search. Any failure — rate limit,
- * missing permission, cold index — yields nothing rather than failing review.
+ * Files that mention the changed file, found by code search. This is a
+ * full-text match on the module's basename — it does not establish an import,
+ * a reference or a call, which is why the label says "mentions" and not
+ * "calls". Any failure — rate limit, missing permission, cold index — yields
+ * nothing rather than failing the review, and `ok: false` tells the caller to
+ * stop searching for the rest of the run.
  */
 async function findCallers(
   client: GitHubClient,
@@ -117,20 +152,23 @@ async function findCallers(
   repo: RepoRef,
   path: string,
   excluded: Set<string>,
-): Promise<string[]> {
+): Promise<{ ok: boolean; paths: string[] }> {
   const base = (path.split('/').pop() ?? '').replace(SOURCE_EXTENSIONS, '');
-  if (base.length < 3) return [];
+  if (base.length < 3) return { ok: true, paths: [] };
 
   try {
     const query = `repo:${repo.owner}/${repo.repo} "${base}" in:file`;
     const results = await client.searchCode(installationId, query);
-    return results
-      .map((item) => item.path)
-      .filter((candidate) => !excluded.has(candidate) && !isTestPath(candidate))
-      .slice(0, 3);
+    return {
+      ok: true,
+      paths: results
+        .map((item) => item.path)
+        .filter((candidate) => !excluded.has(candidate) && !isTestPath(candidate))
+        .slice(0, 3),
+    };
   } catch (error) {
-    log.debug('caller search unavailable', { path, error: String(error) });
-    return [];
+    log.debug('caller search failed', { path, error: String(error) });
+    return { ok: false, paths: [] };
   }
 }
 
@@ -143,4 +181,9 @@ export function renderRelatedFiles(related: RelatedFile[]): string {
     'to judge the change. Never report a finding against them.',
     ...related.map((file) => `\n--- ${file.path} (${file.reason})\n${file.content}`),
   ].join('\n');
+}
+
+/** Paths the council saw as background, which no finding may be anchored to. */
+export function relatedPaths(related: RelatedFile[]): Set<string> {
+  return new Set(related.map((file) => file.path));
 }

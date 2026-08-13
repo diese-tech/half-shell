@@ -166,6 +166,34 @@ describe.each([
     expect(await store.listPublished(repo, 43)).toHaveLength(1);
   });
 
+  it('preserves publishedAt across an update, so callers can order by it', async () => {
+    // The two stores do not order listPublished identically — SQLite's
+    // INSERT OR REPLACE reassigns the rowid it orders by — so selectTarget
+    // sorts by publishedAt instead. That only works if updates preserve it.
+    const first = { ...record('key-1'), publishedAt: '2026-01-01T00:00:00.000Z' };
+    await store.savePublished([first]);
+    await store.savePublished([{ ...first, line: 99 }]);
+
+    const [updated] = await store.listPublished(repo, 42);
+    expect(updated?.publishedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(updated?.line).toBe(99);
+  });
+
+  it('sorting by publishedAt yields the same newest record in either store', async () => {
+    await store.savePublished([
+      { ...record('key-old'), publishedAt: '2026-01-01T00:00:00.000Z' },
+      { ...record('key-new'), publishedAt: '2026-02-01T00:00:00.000Z' },
+    ]);
+    // Update the older one — under SQLite this moves it to the end of rowid order.
+    await store.savePublished([
+      { ...record('key-old'), publishedAt: '2026-01-01T00:00:00.000Z', status: 'still_valid' },
+    ]);
+
+    const published = await store.listPublished(repo, 42);
+    const newest = [...published].sort((a, b) => a.publishedAt.localeCompare(b.publishedAt)).at(-1);
+    expect(newest?.key).toBe('key-new');
+  });
+
   it('survives concurrent writes without losing records', async () => {
     await Promise.all(
       Array.from({ length: 10 }, (_, i) => store.savePublished([record(`key-${i}`)])),

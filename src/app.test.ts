@@ -232,6 +232,7 @@ describe('HalfShellApp', () => {
         maxPromptChars: 120_000,
         maxRelatedFiles: 0,
         maxRelatedChars: 6000,
+        maxRelatedLookups: 30,
         searchCallers: false,
         dryRun: false,
         dataDir,
@@ -429,6 +430,66 @@ describe('HalfShellApp', () => {
     await instance.enqueue(commanded);
 
     expect(github.replies).toHaveLength(1);
+  });
+
+  it('does not advance the re-anchor record during a dry run', async () => {
+    const instance = app();
+    await instance.enqueue(openedPullRequest());
+
+    const store = new FileStore(dataDir);
+    const repo = { owner: 'diese-tech', repo: 'half-shell' };
+    const [before] = await store.listPublished(repo, 12);
+
+    // The finding now anchors elsewhere, and dry run is on.
+    config.review.dryRun = true;
+    github.files = [
+      {
+        path: 'src/loader.ts',
+        status: 'modified',
+        additions: 2,
+        deletions: 1,
+        truncated: false,
+        patch: ['@@ -40,3 +40,5 @@', ' const x = 1;', '+  return query(id, tenantId);', '+  // moved', ' }'].join('\n'),
+      },
+    ];
+    await app().enqueue(openedPullRequest());
+
+    const [after] = await store.listPublished(repo, 12);
+    // Advancing it here would make the next real run believe the notice landed.
+    expect(after?.line).toBe(before?.line);
+    expect(github.replies).toHaveLength(0);
+  });
+
+  it('does not record a resolution during a dry run', async () => {
+    const instance = app(verifyingProvider());
+    await instance.enqueue(openedPullRequest());
+
+    const store = new FileStore(dataDir);
+    const repo = { owner: 'diese-tech', repo: 'half-shell' };
+    const thread = github.inlineComments[0]?.id as number;
+
+    config.review.dryRun = true;
+    await app(verifyingProvider()).enqueue(
+      toReviewJob(
+        {
+          event: 'pull_request_review_comment',
+          deliveryId: 'delivery-dry',
+          payload: {
+            action: 'created',
+            installation: { id: 7 },
+            sender: { login: 'coding-agent' },
+            repository: REPO,
+            pull_request: { number: 12 },
+            comment: { id: 9001, in_reply_to_id: thread, body: 'fixed', path: 'src/loader.ts', line: 2 },
+          },
+        },
+        'half-shell[bot]',
+      )!,
+    );
+
+    // Recording it would mark the finding resolved for a reply never sent.
+    expect(await store.listResolutions(repo, 12)).toHaveLength(0);
+    expect((await store.listPublished(repo, 12))[0]?.status).toBe('published');
   });
 
   it('honours dry run by keeping everything local', async () => {

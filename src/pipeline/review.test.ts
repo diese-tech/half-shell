@@ -306,7 +306,7 @@ describe('runReview', () => {
       relatedFiles: [
         {
           path: 'src/import.ts',
-          reason: 'calls changed code',
+          reason: 'mentions the changed file',
           content: 'results.push(load(id));',
           truncated: false,
         },

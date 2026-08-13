@@ -16,6 +16,8 @@ export interface ReviewConfig {
   maxPromptChars: number;
   maxRelatedFiles: number;
   maxRelatedChars: number;
+  /** Ceiling on GitHub requests spent gathering related context per review. */
+  maxRelatedLookups: number;
   searchCallers: boolean;
   dryRun: boolean;
   dataDir: string;
@@ -69,6 +71,16 @@ function bool(name: string, fallback: boolean): boolean {
 function int(name: string, fallback: number): number {
   const value = Number(env(name));
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+/**
+ * Like `int`, but 0 is a legitimate value rather than a rejected one — some
+ * settings document 0 as "disabled". A malformed value still falls back to the
+ * default instead of becoming NaN, which would silently remove the bound.
+ */
+function nonNegativeInt(name: string, fallback: number): number {
+  const value = Number(env(name));
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
 /** PEM keys are commonly supplied base64-encoded or with escaped newlines. */
@@ -147,8 +159,9 @@ export function loadConfig(): Config {
       maxFiles: int('HALF_SHELL_MAX_FILES', 40),
       maxPatchChars: int('HALF_SHELL_MAX_PATCH_CHARS', 12_000),
       maxPromptChars: int('HALF_SHELL_MAX_PROMPT_CHARS', 120_000),
-      maxRelatedFiles: Number(env('HALF_SHELL_MAX_RELATED_FILES') ?? 5),
+      maxRelatedFiles: nonNegativeInt('HALF_SHELL_MAX_RELATED_FILES', 5),
       maxRelatedChars: int('HALF_SHELL_MAX_RELATED_CHARS', 6_000),
+      maxRelatedLookups: nonNegativeInt('HALF_SHELL_MAX_RELATED_LOOKUPS', 30),
       searchCallers: bool('HALF_SHELL_SEARCH_CALLERS', true),
       dryRun: bool('HALF_SHELL_DRY_RUN', false),
       dataDir: env('HALF_SHELL_DATA_DIR') ?? '.half-shell',

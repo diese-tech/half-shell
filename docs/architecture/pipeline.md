@@ -16,7 +16,7 @@ Queue           →  src/app.ts           one in-flight job per pull request
         ↓
 Context builder →  src/github/context.ts bounded diff + intent + repo rules
         ↓
-Related context →  src/github/related.ts  covering tests and callers (background)
+Related context →  src/github/related.ts  covering tests + mentions (background)
         ↓
 Briefing        →  src/council/briefing.ts   Phase 1
         ↓
@@ -60,7 +60,8 @@ council is not rerun.
 | Every pooled finding must be adjudicated | `verdict.ts` treats partial adjudication as a failed phase and publishes nothing |
 | Never silently use paid inference | `providers/router.ts` drops `paid` providers unless `HALF_SHELL_ALLOW_PAID_INFERENCE` is set |
 | Record the protocol version | every run and verdict carries `protocol_version` |
-| Related context is not reviewable | `related.ts` labels it explicitly and `anchor.ts` drops any finding against it |
+| Related context is not reviewable | `related.ts` labels it explicitly, and `review.ts` passes the related paths to `anchor.ts`, which drops any finding cited against one |
+| Related context is bounded by requests | `related.ts` counts every lookup against `maxLookups` and stops searching after the first rejection |
 
 ## Inference routing
 
@@ -76,6 +77,9 @@ than a silently thinner review.
 - Findings anchored to a line GitHub accepts become inline review comments.
 - Findings that cannot be anchored are summarized in the review body instead of
   being attached to an arbitrary line.
+- At most 20 findings become inline comments, shedding the least severe first.
+  The remainder are listed in the body under their own heading — they have a
+  valid anchor and are not to be confused with unanchorable ones.
 - A finding already published on an earlier commit is not posted again; its
   identity is a hash of file, category and normalized claim, embedded in the
   comment as a hidden marker so replies can be traced back to it across runs.
@@ -95,12 +99,20 @@ than a silently thinner review.
 Beyond the diff, the context builder pulls in the covering test for each
 changed file (by convention: `x.test.ts`, `x.spec.ts`, `__tests__/x`,
 `test_x.py`, mirrored `test/` trees) and, best-effort via code search, files
-that call the changed code. This is background: it is rendered under an
-explicit "NOT part of this change" banner, and diff anchoring already refuses
-to publish a finding against a file outside the diff. Code search is
-rate-limited and index-lagged, so any failure yields no context rather than a
-failed review. Tune with `HALF_SHELL_MAX_RELATED_FILES` (0 disables) and
-`HALF_SHELL_SEARCH_CALLERS`.
+that *mention* the changed file. The search is a full-text match on the
+module's basename — it establishes no import, reference or call, and the label
+in the prompt says so rather than claiming callers.
+
+This is background: it is rendered under an explicit "NOT part of this change"
+banner, and `anchor.ts` is given the related paths so a finding cited against
+one is dropped rather than re-pointed into the diff by its basename fallback.
+
+Gathering is bounded by requests, not only by results: `HALF_SHELL_MAX_RELATED_LOOKUPS`
+(default 30) caps the GitHub calls one review may spend, because a repository
+whose tests do not match the conventions never fills the file budget and would
+otherwise be probed exhaustively for nothing. Code search stops for the rest of
+the run after its first rejection. Tune with `HALF_SHELL_MAX_RELATED_FILES`
+(0 disables) and `HALF_SHELL_SEARCH_CALLERS` (set false to skip search).
 
 ## Persistence
 

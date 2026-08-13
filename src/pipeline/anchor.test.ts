@@ -70,6 +70,29 @@ describe('anchorFindings', () => {
     expect(kept[0]?.finding.file).toBe('src/example.ts');
   });
 
+  it('drops a finding cited against background context, basename be damned', () => {
+    // Without this, normalizePath's basename fallback resolves
+    // src/other/example.ts to the changed src/example.ts and publishes a
+    // comment describing code that is not there.
+    const related = new Set(['src/other/example.ts']);
+    const { kept, dropped } = anchorFindings(
+      [candidate({ file: 'src/other/example.ts' })],
+      diffs,
+      related,
+    );
+
+    expect(kept).toHaveLength(0);
+    expect(dropped[0]?.reason).toContain('background context');
+  });
+
+  it('still anchors a finding against the changed file of the same basename', () => {
+    const related = new Set(['src/other/example.ts']);
+    const { kept } = anchorFindings([candidate({ line: 3 })], diffs, related);
+
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.finding.file).toBe('src/example.ts');
+  });
+
   it('discards a start_line that is not above the anchor', () => {
     const { kept } = anchorFindings([candidate({ line: 3, start_line: 3 })], diffs);
     expect(kept[0]?.finding.start_line).toBeNull();

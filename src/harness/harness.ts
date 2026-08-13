@@ -66,6 +66,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       maxPromptChars: 120_000,
       maxRelatedFiles: 5,
       maxRelatedChars: 6_000,
+      maxRelatedLookups: 30,
       searchCallers: true,
       dryRun: false,
       dataDir,

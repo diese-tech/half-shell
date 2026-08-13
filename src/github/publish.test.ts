@@ -106,6 +106,13 @@ describe('findMovedFindings', () => {
     expect(body).toContain('abcdef1');
     expect(body).not.toMatch(/resolved|fixed/i);
   });
+
+  it('does not assert that a push happened, since the trigger is a moved anchor', () => {
+    // findMovedFindings compares file and line, never the head SHA, so a
+    // re-review on an unchanged commit can reach this text.
+    const body = renderMovedComment(finding({ line: 57 }), 'abcdef1234');
+    expect(body).not.toMatch(/latest push|after the push/i);
+  });
 });
 
 describe('renderReview', () => {
@@ -132,7 +139,7 @@ describe('renderReview', () => {
     expect(body).toContain('Findings without a safe line anchor');
   });
 
-  it('caps inline comments and summarizes the remainder', () => {
+  it('caps inline comments and lists the remainder under its own heading', () => {
     const many = Array.from({ length: MAX_INLINE_COMMENTS + 5 }, (_, i) =>
       finding({ finding_id: `HS-${i}`, claim: `claim number ${i}`, line: 2 }),
     );
@@ -140,7 +147,21 @@ describe('renderReview', () => {
     const { comments, body } = renderReview(context, verdict(many), diffs, new Map());
 
     expect(comments).toHaveLength(MAX_INLINE_COMMENTS);
+    expect(body).toContain('beyond the 20-comment inline limit');
+    // These findings do have a valid anchor; saying otherwise is false.
+    expect(body).not.toContain('Findings without a safe line anchor');
+  });
+
+  it('keeps genuinely unanchorable findings under their own heading', () => {
+    const { body } = renderReview(
+      context,
+      verdict([finding({ line: null }), finding({ finding_id: 'HS-2', claim: 'second', line: 2 })]),
+      diffs,
+      new Map(),
+    );
+
     expect(body).toContain('Findings without a safe line anchor');
+    expect(body).not.toContain('beyond the 20-comment inline limit');
   });
 
   it('keeps the most severe findings inline when it has to shed some', () => {

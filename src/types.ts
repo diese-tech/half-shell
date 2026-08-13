@@ -19,7 +19,7 @@ export interface ChangedFile {
 /** Context beyond the diff, included as background only. */
 export interface RelatedFile {
   path: string;
-  reason: 'covering test' | 'calls changed code';
+  reason: 'covering test' | 'mentions the changed file';
   content: string;
   truncated: boolean;
 }

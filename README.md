@@ -201,6 +201,6 @@ Configuration lives in the environment; see [`.env.example`](./.env.example) for
 
 **First end-to-end implementation.**
 
-Implemented: webhook handling and signature verification, event/command routing, bounded context building with related tests and callers, the six-phase council pipeline, diff-anchored finding validation, schema-checked structured output, provider fallback routing, GitHub publication with rate-limit handling, file or SQLite persistence, finding re-anchoring across force-pushes, run cost telemetry, follow-up verification, and an end-to-end harness that runs the whole service without credentials.
+Implemented: webhook handling and signature verification, event/command routing, bounded context building with related tests and files mentioning the change, the six-phase council pipeline, diff-anchored finding validation, schema-checked structured output, provider fallback routing, GitHub publication with rate-limit handling, file or SQLite persistence, finding re-anchoring across force-pushes, run cost telemetry, follow-up verification, and an end-to-end harness that runs the whole service without credentials.
 
 Not yet exercised: a real run against a live model. Every phase is verified against scripted providers, so the pipeline is known to work — whether a free 70B model produces findings worth publishing is still an open question.

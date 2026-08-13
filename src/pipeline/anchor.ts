@@ -32,11 +32,27 @@ function normalizePath(path: string, known: Iterable<string>): string | undefine
 export function anchorFindings(
   candidates: CandidateFinding[],
   diffs: Map<string, FileDiff>,
+  /**
+   * Files the council saw as background. A finding cited against one of these
+   * is dropped outright: without this, `normalizePath`'s basename fallback
+   * would re-point `src/other/util.ts` at a changed `src/a/util.ts` and publish
+   * a comment describing code that is not there.
+   */
+  relatedPaths: Set<string> = new Set(),
 ): AnchorReport {
   const kept: CandidateFinding[] = [];
   const dropped: { finding: Finding; reason: string }[] = [];
 
   for (const candidate of candidates) {
+    const cited = candidate.finding.file.trim().replace(/^\.\//, '').replace(/^[ab]\//, '');
+    if (relatedPaths.has(cited)) {
+      dropped.push({
+        finding: candidate.finding,
+        reason: `"${cited}" is background context, not part of this change`,
+      });
+      continue;
+    }
+
     const path = normalizePath(candidate.finding.file, diffs.keys());
     if (!path) {
       dropped.push({

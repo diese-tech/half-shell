@@ -25,7 +25,7 @@ function fakeClient(
   } as unknown as GitHubClient;
 }
 
-const OPTIONS = { maxFiles: 5, maxCharsPerFile: 100, searchCallers: false };
+const OPTIONS = { maxFiles: 5, maxCharsPerFile: 100, maxLookups: 30, searchCallers: false };
 
 describe('testCandidates', () => {
   it('offers conventional test paths for a source file', () => {
@@ -85,7 +85,7 @@ describe('gatherRelatedFiles', () => {
     });
 
     expect(related.map((file) => file.path)).toContain('src/import.ts');
-    expect(related.find((file) => file.path === 'src/import.ts')?.reason).toBe('calls changed code');
+    expect(related.find((file) => file.path === 'src/import.ts')?.reason).toBe('mentions the changed file');
   });
 
   it('does not search at all when callers are disabled', async () => {
@@ -115,6 +115,55 @@ describe('gatherRelatedFiles', () => {
         searchCallers: true,
       }),
     ).resolves.toEqual([]);
+  });
+
+  it('stops probing once the request budget is spent', async () => {
+    // A repo whose tests match no convention: every lookup misses, so the
+    // file budget never fills and only the request budget can stop it.
+    let requests = 0;
+    const client = {
+      async getFileContent() {
+        requests += 1;
+        return undefined;
+      },
+      async searchCode(): Promise<{ path: string }[]> {
+        requests += 1;
+        return [];
+      },
+    } as unknown as GitHubClient;
+
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...files[0]!, path: `lib/mod${i}.ts` }));
+    const related = await gatherRelatedFiles(client, 1, { owner: 'o', repo: 'r' }, many, 'head', {
+      ...OPTIONS,
+      maxLookups: 10,
+      searchCallers: true,
+    });
+
+    expect(related).toEqual([]);
+    expect(requests).toBeLessThanOrEqual(10);
+  });
+
+  it('stops searching for the rest of the run after the first rejection', async () => {
+    let searches = 0;
+    const client = {
+      async getFileContent() {
+        return undefined;
+      },
+      async searchCode(): Promise<{ path: string }[]> {
+        searches += 1;
+        throw new Error('rate limited');
+      },
+    } as unknown as GitHubClient;
+
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...files[0]!, path: `lib/mod${i}.ts` }));
+    await gatherRelatedFiles(client, 1, { owner: 'o', repo: 'r' }, many, 'head', {
+      ...OPTIONS,
+      maxLookups: 500,
+      searchCallers: true,
+    });
+
+    // Not once per changed file.
+    expect(searches).toBe(1);
   });
 
   it('collects nothing when the budget is zero', async () => {

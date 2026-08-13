@@ -57,6 +57,7 @@ export async function buildChangeContext(
     {
       maxFiles: config.maxRelatedFiles,
       maxCharsPerFile: config.maxRelatedChars,
+      maxLookups: config.maxRelatedLookups,
       searchCallers: config.searchCallers,
     },
   );
