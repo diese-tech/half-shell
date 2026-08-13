@@ -1,6 +1,7 @@
 import { isExcluded, type ReviewConfig } from '../config.js';
 import type { ChangeContext, ChangedFile, RepoRef } from '../types.js';
 import type { GitHubClient } from './client.js';
+import { gatherRelatedFiles } from './related.js';
 
 const ISSUE_REFERENCE = /(?:closes|fixes|resolves|refs?|see)\s+#(\d+)/gi;
 const INSTRUCTION_FILES = ['CLAUDE.md', 'AGENTS.md', 'CONTRIBUTING.md'];
@@ -46,6 +47,21 @@ export async function buildChangeContext(
   const linkedIssues = await resolveLinkedIssues(client, installationId, repo, description);
   const repoInstructions = await loadRepoInstructions(client, installationId, repo, pr.base.ref);
 
+  // Background only. Anchoring still refuses to publish findings against these.
+  const relatedFiles = await gatherRelatedFiles(
+    client,
+    installationId,
+    repo,
+    files,
+    pr.head.sha,
+    {
+      maxFiles: config.maxRelatedFiles,
+      maxCharsPerFile: config.maxRelatedChars,
+      maxLookups: config.maxRelatedLookups,
+      searchCallers: config.searchCallers,
+    },
+  );
+
   return {
     repo,
     pullNumber,
@@ -60,6 +76,7 @@ export async function buildChangeContext(
     omittedFiles,
     linkedIssues,
     repoInstructions,
+    relatedFiles,
   };
 }
 

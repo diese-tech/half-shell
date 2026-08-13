@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { Finding, Verdict } from '../protocol/types.js';
-import type { ChangeContext } from '../types.js';
+import type { ChangeContext, PublishedFindingRecord } from '../types.js';
 import { commentableLines, type FileDiff } from './diff.js';
 import type { ReviewComment } from './client.js';
 
@@ -9,6 +9,8 @@ export interface RenderedReview {
   body: string;
   comments: ReviewComment[];
 }
+
+const SEVERITY_ORDER: Finding['severity'][] = ['critical', 'high', 'medium', 'low'];
 
 const SEVERITY_LABEL: Record<Finding['severity'], string> = {
   critical: 'critical',
@@ -21,6 +23,49 @@ const SEVERITY_LABEL: Record<Finding['severity'], string> = {
 export function findingKey(finding: Finding): string {
   const basis = `${finding.file}|${finding.category}|${finding.claim.toLowerCase().replace(/\s+/g, ' ').trim()}`;
   return createHash('sha256').update(basis).digest('hex').slice(0, 16);
+}
+
+export interface MovedFinding {
+  record: PublishedFindingRecord;
+  finding: Finding;
+}
+
+/**
+ * A finding that was already published and still stands, but whose anchor
+ * moved — the usual result of a force-push or a rebase. GitHub marks the old
+ * inline comment outdated, so the thread needs the new location. This reports
+ * location only: whether the finding is resolved remains Leonardo's call.
+ */
+export function findMovedFindings(
+  findings: Finding[],
+  published: PublishedFindingRecord[],
+): MovedFinding[] {
+  const byKey = new Map(published.map((record) => [record.key, record]));
+  const moved: MovedFinding[] = [];
+
+  for (const finding of findings) {
+    const record = byKey.get(findingKey(finding));
+    if (!record || record.commentId === undefined) continue;
+    // Only findings already answered stay quiet; withdrawn ones are finished.
+    if (record.status === 'resolved' || record.status === 'withdrawn') continue;
+    const line = finding.line ?? null;
+    if (record.file === finding.file && record.line === line) continue;
+    moved.push({ record, finding });
+  }
+  return moved;
+}
+
+export function renderMovedComment(finding: Finding, headSha: string): string {
+  const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+  return [
+    // States the new location without asserting that a push happened: the
+    // trigger is a moved anchor, which is not the same thing as a new commit.
+    `Still applies. The code this refers to is now at \`${location}\`.`,
+    '',
+    `**Claim.** ${finding.claim}`,
+    '',
+    `<sub>Half-Shell · re-anchored at \`${headSha.slice(0, 7)}\`</sub>`,
+  ].join('\n');
 }
 
 /** Hidden marker so a posted comment can be matched back to its finding. */
@@ -49,6 +94,13 @@ export function renderFindingComment(finding: Finding, rationale?: string): stri
 }
 
 /**
+ * Upper bound on inline comments in one review. The protocol already prefers
+ * silence, so hitting this means something has gone wrong upstream; the
+ * remainder is summarized rather than dropped.
+ */
+export const MAX_INLINE_COMMENTS = 20;
+
+/**
  * Builds the review payload. Findings that cannot be anchored to a line GitHub
  * will accept are summarized in the review body rather than dropped or
  * attached to an arbitrary line.
@@ -61,8 +113,20 @@ export function renderReview(
 ): RenderedReview {
   const comments: ReviewComment[] = [];
   const unanchored: Finding[] = [];
+  // Kept separate from `unanchored`: these findings have a perfectly good
+  // anchor, they just exceeded the inline budget. Saying otherwise is a lie.
+  const overCap: Finding[] = [];
 
-  for (const finding of verdict.published_findings) {
+  // Highest severity first, so the cap sheds the least important findings.
+  const ordered = [...verdict.published_findings].sort(
+    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
+  );
+
+  for (const finding of ordered) {
+    if (comments.length >= MAX_INLINE_COMMENTS) {
+      overCap.push(finding);
+      continue;
+    }
     const diff = diffs.get(finding.file);
     const anchorable = diff ? commentableLines(diff) : new Set<number>();
     if (finding.line != null && anchorable.has(finding.line)) {
@@ -85,13 +149,14 @@ export function renderReview(
     }
   }
 
-  return { body: renderBody(context, verdict, unanchored, rationale), comments };
+  return { body: renderBody(context, verdict, unanchored, overCap, rationale), comments };
 }
 
 function renderBody(
   context: ChangeContext,
   verdict: Verdict,
   unanchored: Finding[],
+  overCap: Finding[],
   rationale: Map<string, string>,
 ): string {
   const published = verdict.published_findings.length;
@@ -117,6 +182,23 @@ function renderBody(
   if (unanchored.length > 0) {
     sections.push('### Findings without a safe line anchor', '');
     for (const finding of unanchored) {
+      sections.push(
+        `- **${finding.file}** — ${renderFindingComment(finding, rationale.get(finding.finding_id))
+          .split('\n')
+          .join('\n  ')}`,
+      );
+    }
+    sections.push('');
+  }
+
+  if (overCap.length > 0) {
+    sections.push(
+      `### Further findings beyond the ${MAX_INLINE_COMMENTS}-comment inline limit`,
+      '',
+      'These have a valid line anchor but exceeded the per-review inline budget.',
+      '',
+    );
+    for (const finding of overCap) {
       sections.push(
         `- **${finding.file}** — ${renderFindingComment(finding, rationale.get(finding.finding_id))
           .split('\n')

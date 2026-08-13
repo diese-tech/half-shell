@@ -16,6 +16,14 @@ export interface ChangedFile {
   truncated: boolean;
 }
 
+/** Context beyond the diff, included as background only. */
+export interface RelatedFile {
+  path: string;
+  reason: 'covering test' | 'mentions the changed file';
+  content: string;
+  truncated: boolean;
+}
+
 /** Everything the council is allowed to see about a change. */
 export interface ChangeContext {
   repo: RepoRef;
@@ -32,6 +40,8 @@ export interface ChangeContext {
   omittedFiles: { path: string; reason: string }[];
   linkedIssues: { number: number; title: string; body: string }[];
   repoInstructions?: string;
+  /** Background context; never reviewable, never a valid finding location. */
+  relatedFiles: RelatedFile[];
 }
 
 export type ReviewDepth = 'standard' | 'deep';
@@ -85,6 +95,17 @@ export interface LaneOutcome {
   error?: string;
 }
 
+/** What one review cost, for capacity planning and cost control. */
+export interface RunTelemetry {
+  durationMs: number;
+  /** Wall-clock milliseconds per protocol phase. */
+  phaseMs: Record<string, number>;
+  providerCalls: number;
+  providerFailures: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export interface ReviewRun {
   id: string;
   repo: RepoRef;
@@ -97,6 +118,7 @@ export interface ReviewRun {
   verdict: Verdict;
   lanes: LaneOutcome[];
   providersUsed: string[];
+  telemetry: RunTelemetry;
 }
 
 export interface PublishedFindingRecord {

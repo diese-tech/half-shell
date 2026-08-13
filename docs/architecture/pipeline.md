@@ -16,6 +16,8 @@ Queue           →  src/app.ts           one in-flight job per pull request
         ↓
 Context builder →  src/github/context.ts bounded diff + intent + repo rules
         ↓
+Related context →  src/github/related.ts  covering tests + mentions (background)
+        ↓
 Briefing        →  src/council/briefing.ts   Phase 1
         ↓
 Lanes           →  src/council/lanes.ts      Phase 2, concurrent, blind
@@ -58,6 +60,8 @@ council is not rerun.
 | Every pooled finding must be adjudicated | `verdict.ts` treats partial adjudication as a failed phase and publishes nothing |
 | Never silently use paid inference | `providers/router.ts` drops `paid` providers unless `HALF_SHELL_ALLOW_PAID_INFERENCE` is set |
 | Record the protocol version | every run and verdict carries `protocol_version` |
+| Related context is not reviewable | `related.ts` labels it explicitly, and `review.ts` passes the related paths to `anchor.ts`, which drops any finding cited against one |
+| Related context is bounded by requests | `related.ts` counts every lookup against `maxLookups` and stops searching after the first rejection |
 
 ## Inference routing
 
@@ -73,6 +77,9 @@ than a silently thinner review.
 - Findings anchored to a line GitHub accepts become inline review comments.
 - Findings that cannot be anchored are summarized in the review body instead of
   being attached to an arbitrary line.
+- At most 20 findings become inline comments, shedding the least severe first.
+  The remainder are listed in the body under their own heading — they have a
+  valid anchor and are not to be confused with unanchorable ones.
 - A finding already published on an earlier commit is not posted again; its
   identity is a hash of file, category and normalized claim, embedded in the
   comment as a hidden marker so replies can be traced back to it across runs.
@@ -81,13 +88,81 @@ than a silently thinner review.
 - A reply carrying no command is verified only when its parent comment is a
   known Half-Shell finding; unrelated review threads are left alone.
 - Reviews are posted as `COMMENT`. Half-Shell never approves or blocks a PR.
+- Writes are never replayed after an ambiguous failure. GitHub rejects a
+  rate-limited request before acting on it, so those are retried; a 5xx or a
+  lost connection on a `POST` might mean the review landed, so Half-Shell fails
+  that run rather than risk a duplicate review. The finding is not recorded as
+  published, so the next push or `@half-shell review` posts it.
+
+## Related context
+
+Beyond the diff, the context builder pulls in the covering test for each
+changed file (by convention: `x.test.ts`, `x.spec.ts`, `__tests__/x`,
+`test_x.py`, mirrored `test/` trees) and, best-effort via code search, files
+that *mention* the changed file. The search is a full-text match on the
+module's basename — it establishes no import, reference or call, and the label
+in the prompt says so rather than claiming callers.
+
+This is background: it is rendered under an explicit "NOT part of this change"
+banner, and `anchor.ts` is given the related paths so a finding cited against
+one is dropped rather than re-pointed into the diff by its basename fallback.
+
+Gathering is bounded by requests, not only by results: `HALF_SHELL_MAX_RELATED_LOOKUPS`
+(default 30) caps the GitHub calls one review may spend, because a repository
+whose tests do not match the conventions never fills the file budget and would
+otherwise be probed exhaustively for nothing. Code search stops for the rest of
+the run after its first rejection. Tune with `HALF_SHELL_MAX_RELATED_FILES`
+(0 disables) and `HALF_SHELL_SEARCH_CALLERS` (set false to skip search).
 
 ## Persistence
 
-`FileStore` keeps one JSON file per pull request under `HALF_SHELL_DATA_DIR`,
-holding the last 20 runs, published finding records, and resolutions. Writes
-are serialized per pull request. Swapping in a database means implementing the
-`Store` interface — nothing else changes.
+Two implementations of the same `Store` interface, selected with
+`HALF_SHELL_STORE`:
+
+- `file` (default) — one JSON file per pull request under `HALF_SHELL_DATA_DIR`,
+  with writes serialized per pull request. Fine for a single instance.
+- `sqlite` — a single database at `HALF_SHELL_DATABASE_PATH`, via Node's
+  built-in `node:sqlite`, so it costs no dependency. Use it when the deployment
+  outlives its container.
+
+Both keep the last 20 runs per pull request plus published findings and
+resolutions, and both are covered by the same test suite.
+
+Finding state is keyed by the stable finding hash, never by the protocol's
+`finding_id` — `HS-001` recurs on every run, so resolving a finding by that id
+would mark whichever finding happened to be first.
+
+## Telemetry
+
+Every run records wall-clock duration, per-phase timing, provider call and
+failure counts, and prompt/completion tokens where the endpoint reports them.
+Totals are logged when a review finishes and printed by `@half-shell explain`.
+A standard review costs roughly 15 provider calls: one briefing, six lanes, six
+Sparring passes, one Shredder challenge, one verdict.
+
+## Surviving a force-push
+
+A rebase moves code out from under an inline comment, and GitHub marks the
+original thread outdated. On re-review, a finding whose stable key was already
+published but whose anchor has moved gets a reply in its existing thread with
+the new location. This states location only — whether a finding is resolved
+stays Leonardo's call, reached through the follow-up path.
+
+## Running it without credentials
+
+`src/harness/` boots the real service against a stub GitHub and a stub
+OpenAI-compatible endpoint. Everything below the network boundary is production
+code: signature verification, App JWT signing, installation tokens, the council
+pipeline, publication and persistence.
+
+```bash
+npm run harness    # prints the review Half-Shell would post
+npm test           # includes the end-to-end suite
+```
+
+The stub inference server answers each phase from a script, so failure paths —
+a dead verdict phase, a failed Shredder challenge, a transient GitHub 500 — are
+all reproducible.
 
 ## Operating the service
 

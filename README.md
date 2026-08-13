@@ -181,11 +181,19 @@ npm run build
 npm start     # webhook listener: POST /webhook, GET /healthz
 ```
 
+Run a complete review against stub servers — no credentials, no network:
+
+```bash
+npm run harness
+```
+
 Review a real pull request from the terminal without posting anything:
 
 ```bash
 node dist/cli.js --repo owner/name --pr 42 --installation 12345
 ```
+
+Deploying: [`docs/deployment.md`](./docs/deployment.md) and the [`Dockerfile`](./Dockerfile).
 
 Configuration lives in the environment; see [`.env.example`](./.env.example) for the GitHub App credentials, the ordered inference chain, and the review budget. Implementation details are in [`docs/architecture/pipeline.md`](./docs/architecture/pipeline.md).
 
@@ -193,6 +201,6 @@ Configuration lives in the environment; see [`.env.example`](./.env.example) for
 
 **First end-to-end implementation.**
 
-Implemented: webhook handling and signature verification, event/command routing, bounded context building, the six-phase council pipeline, diff-anchored finding validation, schema-checked structured output, provider fallback routing, GitHub publication, per-PR persistence, and follow-up verification.
+Implemented: webhook handling and signature verification, event/command routing, bounded context building with related tests and files mentioning the change, the six-phase council pipeline, diff-anchored finding validation, schema-checked structured output, provider fallback routing, GitHub publication with rate-limit handling, file or SQLite persistence, finding re-anchoring across force-pushes, run cost telemetry, follow-up verification, and an end-to-end harness that runs the whole service without credentials.
 
-Not yet implemented: retrieval of related callers and tests beyond the diff, a database-backed store, review-thread mapping across force-pushes, and rate/cost telemetry.
+Not yet exercised: a real run against a live model. Every phase is verified against scripted providers, so the pipeline is known to work — whether a free 70B model produces findings worth publishing is still an open question.

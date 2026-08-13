@@ -69,6 +69,7 @@ const context: ChangeContext = {
   ],
   omittedFiles: [],
   linkedIssues: [],
+  relatedFiles: [],
 };
 
 const FINDING = {
@@ -297,6 +298,69 @@ describe('runReview', () => {
 
     expect(run.verdict.coverage).toContain('src/second.ts');
     expect(run.verdict.coverage_limitations?.join(' ')).toContain('not reviewed');
+  });
+
+  it('refuses to publish a finding against related background context', async () => {
+    const withBackground: ChangeContext = {
+      ...context,
+      relatedFiles: [
+        {
+          path: 'src/import.ts',
+          reason: 'mentions the changed file',
+          content: 'results.push(load(id));',
+          truncated: false,
+        },
+      ],
+    };
+    const provider = new ScriptedProvider(
+      script({
+        // The lane reports against the background file, not the diff.
+        'lane:Raphael': JSON.stringify({ findings: [{ ...FINDING, file: 'src/import.ts' }] }),
+        'lane:Donatello': JSON.stringify({ findings: [] }),
+        verdict: JSON.stringify({ decisions: [], unresolved_uncertainty: [] }),
+      }),
+    );
+
+    const { run, pool } = await runReview(router(provider), withBackground, {
+      depth: 'standard',
+      maxPatchChars: 5000,
+    });
+
+    expect(pool).toHaveLength(0);
+    expect(run.verdict.published_findings).toHaveLength(0);
+  });
+
+  it('shows related context to investigators, labelled as off limits', async () => {
+    const prompts: string[] = [];
+    const spy: Provider = {
+      id: 'spy',
+      tier: 'local',
+      model: 'spy',
+      async complete(request) {
+        const phase = detectPhase(request.system);
+        if (phase.startsWith('lane:')) prompts.push(request.user);
+        return { text: script()[phase] ?? '{}', provider: 'spy', model: 'spy' };
+      },
+    };
+
+    await runReview(
+      router(spy),
+      {
+        ...context,
+        relatedFiles: [
+          {
+            path: 'src/loader.test.ts',
+            reason: 'covering test',
+            content: 'it("loads", () => {});',
+            truncated: false,
+          },
+        ],
+      },
+      { depth: 'standard', maxPatchChars: 5000 },
+    );
+
+    expect(prompts[0]).toContain('src/loader.test.ts');
+    expect(prompts[0]).toContain('Never report a finding against them');
   });
 
   it('does not leak investigator identity into the deliberation prompts', async () => {

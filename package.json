@@ -17,7 +17,8 @@
     "review": "node dist/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.test.json"
+    "typecheck": "tsc -p tsconfig.test.json",
+    "harness": "node dist/harness/run.js"
   },
   "dependencies": {
     "ajv": "^8.17.1"

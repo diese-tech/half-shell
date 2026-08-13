@@ -17,9 +17,27 @@ export interface RouterOptions {
  * Ordered fallback chain: free cloud, then alternate free cloud, then local
  * inference. Paid tiers stay out of the chain unless explicitly enabled.
  */
+export interface RouterTelemetry {
+  /** Completions that returned successfully. */
+  calls: number;
+  /** Attempts that failed, including ones a later provider recovered from. */
+  failures: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Milliseconds spent waiting on providers, including failed attempts. */
+  latencyMs: number;
+}
+
 export class ProviderRouter {
   private readonly chain: Provider[];
   private readonly usedIds = new Set<string>();
+  private readonly telemetry: RouterTelemetry = {
+    calls: 0,
+    failures: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    latencyMs: 0,
+  };
 
   constructor(
     providers: Provider[],
@@ -50,6 +68,11 @@ export class ProviderRouter {
     return [...this.usedIds];
   }
 
+  /** Cost and latency accounting for everything this router has served. */
+  get stats(): RouterTelemetry {
+    return { ...this.telemetry };
+  }
+
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     if (this.chain.length === 0) {
       throw new Error('no inference providers are configured');
@@ -59,11 +82,18 @@ export class ProviderRouter {
 
     for (const provider of this.chain) {
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const startedAt = Date.now();
         try {
           const result = await provider.complete(request);
           this.usedIds.add(provider.id);
+          this.telemetry.calls += 1;
+          this.telemetry.latencyMs += Date.now() - startedAt;
+          this.telemetry.promptTokens += result.usage?.prompt ?? 0;
+          this.telemetry.completionTokens += result.usage?.completion ?? 0;
           return result;
         } catch (error) {
+          this.telemetry.failures += 1;
+          this.telemetry.latencyMs += Date.now() - startedAt;
           const retryable = error instanceof ProviderError ? error.retryable : false;
           failures.push(error instanceof Error ? error.message : String(error));
           log.warn('provider attempt failed', {

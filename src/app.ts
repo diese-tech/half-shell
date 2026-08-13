@@ -2,14 +2,21 @@ import type { Config } from './config.js';
 import { GitHubClient } from './github/client.js';
 import { buildChangeContext } from './github/context.js';
 import { buildDiffIndex } from './github/diff.js';
-import { findingKey, findingMarker, renderReview } from './github/publish.js';
+import {
+  findingKey,
+  findingMarker,
+  findMovedFindings,
+  renderMovedComment,
+  renderReview,
+} from './github/publish.js';
 import { log, errorFields } from './logger.js';
 import { runFollowUp, renderResolution } from './pipeline/followup.js';
 import { runReview } from './pipeline/review.js';
 import { ProviderRouter } from './providers/router.js';
-import type { Category } from './protocol/types.js';
+import type { Category, Finding } from './protocol/types.js';
+import { SqliteStore } from './store/sqlite-store.js';
 import { FileStore, type Store } from './store/store.js';
-import type { PublishedFindingRecord, ReviewJob } from './types.js';
+import type { PublishedFindingRecord, ReviewJob, ReviewRun } from './types.js';
 
 /**
  * Runtime orchestration. This layer gathers context, drives the protocol, and
@@ -37,7 +44,7 @@ export class HalfShellApp {
       throw new Error('GitHub App credentials are not configured');
     }
     this.client = dependencies.client ?? new GitHubClient(config.github!);
-    this.store = dependencies.store ?? new FileStore(config.review.dataDir);
+    this.store = dependencies.store ?? createStore(config);
     this.createRouter =
       dependencies.createRouter ??
       (() =>
@@ -56,6 +63,21 @@ export class HalfShellApp {
       .catch((error) => log.error('job failed', { key, ...errorFields(error) }));
     this.queues.set(key, next);
     return next;
+  }
+
+  /**
+   * Resolves once every queued job has finished. Used for graceful shutdown
+   * so a review in flight is not abandoned mid-publication.
+   */
+  async idle(): Promise<void> {
+    while (this.queues.size > 0) {
+      const pending = [...this.queues.values()];
+      await Promise.allSettled(pending);
+      // A job may have enqueued more work while we waited.
+      for (const [key, promise] of this.queues) {
+        if (pending.includes(promise)) this.queues.delete(key);
+      }
+    }
   }
 
   async handle(job: ReviewJob): Promise<void> {
@@ -101,13 +123,15 @@ export class HalfShellApp {
     await this.store.saveRun(run);
 
     // Findings already published on an earlier commit stay in their threads.
-    const alreadyPublished = new Set(
-      (await this.store.listPublished(job.repo, job.pullNumber)).map((record) => record.key),
-    );
+    const previous = await this.store.listPublished(job.repo, job.pullNumber);
+    const alreadyPublished = new Set(previous.map((record) => record.key));
     const fresh = run.verdict.published_findings.filter(
       (finding) => !alreadyPublished.has(findingKey(finding)),
     );
     const verdict = { ...run.verdict, published_findings: fresh };
+
+    // A rebase or force-push moves code out from under an inline comment.
+    await this.reportMovedFindings(job, run.verdict.published_findings, previous, context.headSha);
 
     if (verdict.complete && fresh.length === 0 && alreadyPublished.size > 0) {
       log.info('no new findings since the last review; staying silent', { pr: job.pullNumber });
@@ -151,6 +175,49 @@ export class HalfShellApp {
       publishedAt: new Date().toISOString(),
     }));
     await this.store.savePublished(records);
+  }
+
+  /**
+   * Re-anchor findings that survived a push at a new location. GitHub marks
+   * the original inline comment outdated, so without this the thread silently
+   * points at code that has moved.
+   */
+  private async reportMovedFindings(
+    job: ReviewJob,
+    findings: Finding[],
+    previous: PublishedFindingRecord[],
+    headSha: string,
+  ): Promise<void> {
+    const moved = findMovedFindings(findings, previous);
+    if (moved.length === 0) return;
+
+    for (const { record, finding } of moved) {
+      const body = renderMovedComment(finding, headSha);
+      if (this.config.review.dryRun) {
+        // The stored anchor is a receipt for a notice that was posted. Advancing
+        // it here would make the next real run think the move was already
+        // reported, destroying the notice rather than deferring it.
+        log.info('dry run; move notice not posted', { pr: job.pullNumber, body });
+        continue;
+      }
+      try {
+        await this.client.replyToReviewComment(
+          job.installationId,
+          job.repo,
+          job.pullNumber,
+          record.commentId as number,
+          body,
+        );
+      } catch (error) {
+        log.warn('could not re-anchor a moved finding', errorFields(error));
+        continue;
+      }
+      await this.store.savePublished([
+        { ...record, file: finding.file, line: finding.line ?? null, headSha },
+      ]);
+    }
+
+    log.info('re-anchored findings after a push', { pr: job.pullNumber, count: moved.length });
   }
 
   private async followUp(job: ReviewJob): Promise<void> {
@@ -197,12 +264,15 @@ export class HalfShellApp {
     });
     if (!resolution) return;
 
-    await this.store.saveResolution(job.repo, job.pullNumber, resolution);
-
     if (this.config.review.dryRun) {
+      // Recording the resolution would mark the finding resolved or withdrawn,
+      // which findMovedFindings then skips permanently — a durable state change
+      // for a reply that was never sent.
       log.info('dry run; resolution not posted', { pr: job.pullNumber, resolution });
       return;
     }
+
+    await this.store.saveResolution(job.repo, job.pullNumber, resolution, target.key);
 
     const body = renderResolution(resolution);
     const replyTo = job.thread.inReplyToId ?? target.commentId;
@@ -237,6 +307,7 @@ export class HalfShellApp {
       `- Published: ${verdict.published_findings.length}`,
       `- Lanes completed: ${latest.lanes.filter((lane) => lane.ok).length}/${latest.lanes.length}`,
       `- Review completed: ${verdict.complete ? 'yes' : 'no'}`,
+      ...renderTelemetry(latest),
       ...((verdict.coverage_limitations ?? []).length > 0
         ? ['', '**Coverage limitations**', ...(verdict.coverage_limitations ?? []).map((l) => `- ${l}`)]
         : []),
@@ -248,6 +319,32 @@ export class HalfShellApp {
     }
     await this.client.createIssueComment(job.installationId, job.repo, job.pullNumber, body);
   }
+}
+
+/** File persistence by default; SQLite when the deployment outlives a container. */
+function createStore(config: Config): Store {
+  return config.review.store === 'sqlite'
+    ? new SqliteStore(config.review.databasePath)
+    : new FileStore(config.review.dataDir);
+}
+
+/** Cost and timing for one run, shown when someone asks for the record. */
+function renderTelemetry(run: ReviewRun): string[] {
+  const telemetry = run.telemetry;
+  if (!telemetry) return [];
+
+  const phases = Object.entries(telemetry.phaseMs)
+    .map(([phase, ms]) => `${phase} ${(ms / 1000).toFixed(1)}s`)
+    .join(', ');
+
+  return [
+    '',
+    '**Run cost**',
+    `- Duration: ${(telemetry.durationMs / 1000).toFixed(1)}s${phases ? ` (${phases})` : ''}`,
+    `- Provider calls: ${telemetry.providerCalls}${telemetry.providerFailures > 0 ? ` (${telemetry.providerFailures} failed)` : ''}`,
+    `- Tokens: ${telemetry.promptTokens.toLocaleString('en-US')} in / ${telemetry.completionTokens.toLocaleString('en-US')} out`,
+    `- Providers: ${run.providersUsed.join(', ') || 'none'}`,
+  ];
 }
 
 /**
@@ -279,5 +376,7 @@ function selectTarget(
       return nearest[0] as PublishedFindingRecord;
     }
   }
-  return published.at(-1);
+  // Most recently published, stated explicitly rather than inferred from
+  // storage order — the two stores do not order listPublished identically.
+  return [...published].sort((a, b) => a.publishedAt.localeCompare(b.publishedAt)).at(-1);
 }
