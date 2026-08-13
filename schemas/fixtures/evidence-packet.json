@@ -1,0 +1,24 @@
+{
+  "review_id": "rev_01J8Z9K3QG7V6R2X4M5N6P7Q8R",
+  "facts": [
+    { "statement": "load() gained a required tenantId parameter." },
+    { "statement": "Issue #7 asks for record loading to be scoped per tenant." }
+  ],
+  "sources": [
+    { "kind": "diff", "reference": "src/loader.ts@def5678" },
+    { "kind": "linked_issue", "reference": "#7" }
+  ],
+  "relevance": [
+    "This is the contract change every caller must now satisfy.",
+    "Establishes the PR's stated intent."
+  ],
+  "inferences": [
+    { "statement": "The author likely missed src/import.ts because it wasn't in the PR's diff summary.", "basis": "The PR description only mentions src/loader.ts." }
+  ],
+  "unknowns": [
+    { "question": "Are there other unlisted callers of load() outside this diff?", "why_it_matters": "Would change the scope of the finding if so." }
+  ],
+  "stated_intent": "Scope record loading to a tenant. Fixes #7.",
+  "unresolved_context": [],
+  "created_at": "2026-08-13T06:00:30.000Z"
+}

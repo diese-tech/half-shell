@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/orchestration/v1/verdict.schema.json",
+  "title": "Half-Shell Council Verdict v1",
+  "description": "Leonardo's structured arbitration. overall_outcome describes review materiality, not the GitHub review event — Publication (Issue #12 section 11) maps this to APPROVE/REQUEST_CHANGES/COMMENT via config/council/orchestration.yaml's publication_policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["review_id", "reviewer", "findings", "overall_outcome", "rationale", "created_at"],
+  "properties": {
+    "review_id": { "type": "string", "minLength": 1 },
+    "reviewer": { "type": "string", "const": "leonardo" },
+    "overall_outcome": {
+      "type": "string",
+      "enum": ["clean_review", "non_blocking_findings_published", "blocking_findings_published", "incomplete"]
+    },
+    "rationale": { "type": "string", "minLength": 1 },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "outcome", "public_reason"],
+        "properties": {
+          "finding_id": { "type": "string", "minLength": 1 },
+          "outcome": {
+            "type": "string",
+            "enum": ["publish", "reject", "merge", "narrow", "raise_severity", "lower_severity", "request_more_investigation"]
+          },
+          "final_severity": {
+            "type": ["string", "null"],
+            "enum": ["critical", "high", "medium", "low", null]
+          },
+          "public_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plain-English reason, safe to publish. For a rejection, narrowing, or severity change this is Leo's recorded reasoning, per Issue #12 section 10."
+          }
+        }
+      }
+    },
+    "unresolved_uncertainty": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

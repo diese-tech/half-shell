@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/orchestration/v1/evidence-packet.schema.json",
+  "title": "Half-Shell Council Evidence Packet v1",
+  "description": "April's CASE_FILE output. Supports her FACT / INFERENCE / UNKNOWN model explicitly — see Issue #12 section 4 and April's evidence_packet_style in config/personas/april.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["review_id", "facts", "sources", "relevance", "inferences", "unknowns", "stated_intent", "created_at"],
+  "properties": {
+    "review_id": { "type": "string", "minLength": 1 },
+    "facts": {
+      "type": "array",
+      "description": "Directly supported statements. Each fact's source and relevance are tracked in the parallel sources/relevance arrays by index, keeping provenance explicit rather than folding it into free text.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement"],
+        "properties": {
+          "statement": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Provenance for facts[i], parallel by index.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "reference"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["diff", "pull_request", "linked_issue", "comment", "repository_guidance", "commit_history", "related_pull_request"]
+          },
+          "reference": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "relevance": {
+      "type": "array",
+      "description": "Why facts[i] matters to this PR, parallel by index.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "inferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "basis"],
+        "properties": {
+          "statement": { "type": "string", "minLength": 1 },
+          "basis": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question"],
+        "properties": {
+          "question": { "type": "string", "minLength": 1 },
+          "why_it_matters": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "stated_intent": {
+      "type": "string",
+      "description": "What the PR claims to do. Never fabricated — an empty string is valid when no intent was stated."
+    },
+    "unresolved_context": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

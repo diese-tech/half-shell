@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://half-shell.dev/orchestration/v1/council-event.schema.json",
+  "title": "Half-Shell Council Event v1",
+  "description": "One entry in the append-only event stream that powers the future full-Dojo web UI. sequence is monotonic within a review_id. See Issue #12 section 13.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "review_id", "sequence", "phase", "actor", "event_type", "created_at"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "review_id": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "RECEIVED",
+        "CASE_FILE",
+        "INDEPENDENT_REVIEW",
+        "MENTORSHIP",
+        "SYNTHESIS",
+        "SPARRING",
+        "LEO_REVIEW",
+        "PUBLICATION",
+        "ARCHIVED"
+      ]
+    },
+    "actor": {
+      "type": "string",
+      "description": "A persona codename, or \"orchestrator\" for system-generated events.",
+      "enum": ["orchestrator", "leo", "raph", "donnie", "mikey", "splinter", "april", "casey", "shredder"]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "phase_started",
+        "phase_completed",
+        "persona_message",
+        "finding_created",
+        "finding_updated",
+        "finding_merged",
+        "finding_withdrawn",
+        "evidence_added",
+        "challenge",
+        "challenge_answered",
+        "challenge_accepted",
+        "experiment_proposed",
+        "observation_recorded",
+        "lesson_added",
+        "verdict_recorded",
+        "github_publication_started",
+        "github_publication_completed",
+        "run_superseded",
+        "run_failed",
+        "validation_failed"
+      ]
+    },
+    "finding_id": { "type": ["string", "null"] },
+    "content": { "type": ["string", "null"] },
+    "metadata": { "type": ["object", "null"], "additionalProperties": true },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

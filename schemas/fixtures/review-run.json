@@ -1,0 +1,22 @@
+{
+  "id": "rev_01J8Z9K3QG7V6R2X4M5N6P7Q8R",
+  "repository_id": "270803949",
+  "repository_full_name": "diese-tech/half-shell",
+  "pull_request_number": 12,
+  "base_sha": "abc1234567890abc1234567890abc1234567890",
+  "head_sha": "def5678901234def5678901234def5678901234",
+  "status": "running",
+  "current_phase": "SPARRING",
+  "generation": 1,
+  "trigger": "webhook",
+  "superseded_by_review_id": null,
+  "github_delivery_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "provider_usage": {
+    "raph": { "provider": "groq", "model": "llama-3.3-70b" }
+  },
+  "token_usage": { "prompt_tokens": 18234, "completion_tokens": 2109 },
+  "cost_estimate": 0.0142,
+  "error": null,
+  "created_at": "2026-08-13T06:00:00.000Z",
+  "updated_at": "2026-08-13T06:04:12.000Z"
+}

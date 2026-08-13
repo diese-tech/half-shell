@@ -1,0 +1,23 @@
+{
+  "id": "finding_01J8Z9K4RH8W7S3Y5N6P7Q8R9S",
+  "review_id": "rev_01J8Z9K3QG7V6R2X4M5N6P7Q8R",
+  "source_persona": "raph",
+  "category": "regression",
+  "claim": "importRecords still calls load() without the now-required tenant id.",
+  "evidence": "load() gained a required tenantId parameter in src/loader.ts, but src/import.ts line 12 still passes only id.",
+  "affected_code": { "file": "src/import.ts", "line": 12, "start_line": null },
+  "consequence": "Every import throws \"tenantId is required\" at runtime.",
+  "confidence": 0.92,
+  "status": "surviving_sparring",
+  "reproduction": null,
+  "proposed_fix": "Thread tenantId through importRecords to the load() call.",
+  "severity": "high",
+  "historical_context": null,
+  "related_findings": [],
+  "corroboration": {
+    "type": "independent_distinct_evidence",
+    "confidence_effect": "strong_confidence_gain",
+    "contributing_source_personas": ["raph", "donnie"]
+  },
+  "root_cause": "The signature change was not propagated to every caller."
+}

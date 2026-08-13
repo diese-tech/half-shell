@@ -1,0 +1,197 @@
+# Half-Shell council orchestration — runtime/state-machine behavior knobs.
+#
+# This file holds behavior, not database schemas (those are the separate
+# JSON Schemas under /schemas) and not character (that's config/personas/).
+# See docs/architecture/council-orchestration.md for the full lifecycle this
+# configures, and Issue #12 for the source requirements.
+
+name: Half-Shell Council Orchestration
+version: 1
+
+# Who can do what. The orchestrator is the only thing that ever touches
+# GitHub or advances state — see src/orchestration/engine.ts and
+# src/orchestration/phases/publication.ts, which are what actually enforce
+# this, not this file.
+authority:
+  orchestrator:
+    owns_execution: true
+    owns_github_mutation: true
+    owns_state_transitions: true
+    owns_retry_policy: true
+    owns_token_and_cost_caps: true
+
+  leonardo:
+    role: final_arbiter
+    owns_final_review_decision: true
+    can_publish_directly: false
+    can_reject_surviving_finding: true
+    can_change_severity: true
+    can_request_more_investigation: true
+
+  advisors:
+    can_recommend: true
+    can_publish_directly: false
+    can_mutate_github: false
+
+  shredder:
+    role: adversarial_challenger
+    has_veto: false
+    can_block_by_authority: false
+
+# The review lifecycle. Every phase is persisted and resumable — see
+# src/orchestration/engine.ts. This list is also the canonical phase order;
+# the engine does not hard-code it a second time.
+review_phases:
+  order:
+    - RECEIVED
+    - CASE_FILE
+    - INDEPENDENT_REVIEW
+    - MENTORSHIP
+    - SYNTHESIS
+    - SPARRING
+    - LEO_REVIEW
+    - PUBLICATION
+    - ARCHIVED
+  terminal_error_states:
+    - FAILED_RETRYABLE
+    - FAILED_FINAL
+    - CANCELLED
+    - SUPERSEDED
+
+  case_file:
+    lead: april
+    inputs:
+      - pull_request_metadata
+      - current_diff
+      - linked_issues
+      - repository_guidance
+      - relevant_history
+      - existing_review_discussion_when_relevant
+
+  independent_review:
+    reviewers: [raph, donnie, mikey, casey]
+    run_in_parallel: true
+    anonymity:
+      between_reviewers: true
+
+  mentorship:
+    reviewer: splinter
+    inputs:
+      - candidate_findings
+      - verified_context
+      - prior_half_shell_findings
+      - prior_resolutions
+      - repository_guidance
+      - recurrence_metadata
+      - guardrail_history
+
+  sparring:
+    participants: [raph, donnie, mikey, april, casey, splinter, shredder]
+    allowed_actions:
+      - defend
+      - challenge
+      - clarify
+      - add_evidence
+      - narrow
+      - withdraw
+      - accept
+      - merge_related
+
+  leo_review:
+    reviewer: leo
+    allowed_outcomes:
+      - publish
+      - reject
+      - merge
+      - narrow
+      - raise_severity
+      - lower_severity
+      - request_more_investigation
+
+# Corroboration and correlated-reasoning rules. Do not automatically
+# penalize all overlapping findings — see Issue #12 section 8 for the
+# definitions. Enforced in src/orchestration/phases/synthesis.ts.
+corroboration_rules:
+  shared_assumption:
+    effect: no_confidence_gain
+  repeated_unsupported_assumption:
+    effect: confidence_penalty
+  independent_same_evidence:
+    effect: small_confidence_gain
+  independent_distinct_evidence:
+    effect: strong_confidence_gain
+
+# Shredder's challenge budget. The invariant (no infinite loops, no
+# goalpost shifting) is mandatory; these specific numbers are the tunable
+# part. Enforced in src/orchestration/phases/sparring.ts — never trust the
+# persona prompt alone to self-limit.
+challenge_budget:
+  initial_challenges_per_finding: 3
+  follow_up_rounds: 1
+  extend_only_if_new_evidence: true
+
+# How Leo's verdict becomes a GitHub PR review outcome. Deterministic and
+# configurable, never invented per-run. Applied in
+# src/orchestration/phases/publication.ts.
+publication_policy:
+  # A published finding counts as "blocking" when its final_severity is at
+  # or above this threshold.
+  blocking_severity_threshold: high
+  request_changes_when:
+    - one_or_more_published_findings_are_blocking
+  comment_when:
+    - published_findings_exist_but_none_are_blocking
+  approve_when:
+    - no_publishable_material_findings
+    - review_completed_successfully
+
+# Never short-circuit solely on file type or "no logic change" — see Issue
+# #12 section 16. Enforced in src/orchestration/earlyExit.ts.
+early_exit:
+  allowed_when:
+    - case_file_complete
+    - all_required_review_lanes_return_clean
+    - no_unresolved_context
+    - no_material_observations
+    - no_guardrail_or_history_trigger
+
+# What the public GitHub review shows vs. what stays internal to the event
+# stream / future Dojo web app. Enforced in
+# src/orchestration/phases/publication.ts and src/orchestration/events.ts.
+conversation_visibility:
+  public:
+    - half_shell_summary
+    - approved_findings
+    - relevant_specialist_attribution
+    - leonardo_verdict
+  internal_only:
+    - internal_argument
+    - withdrawn_findings
+    - failed_theories
+    - raw_personality_chatter
+    - hidden_reasoning
+
+cost_controls:
+  parallel_specialist_review: true
+  deduplicate_before_sparring: true
+  shredder_budget_enforced: true
+  historical_context_bounded: true
+  stop_clean_review_early_when_safe: true
+  max_follow_up_investigation_rounds: 1
+  max_persona_retries_per_phase: 1
+
+# Which model tier a persona is routed to, by config rather than hard-coded
+# vendor logic. "local_or_free", "stronger_reasoning_model", and
+# "strongest_available_model" are tier labels resolved against the
+# provider chain configured in HALF_SHELL_PROVIDERS — see
+# src/orchestration/provider.ts. Do not read vendor names out of this file;
+# it deliberately has none.
+model_routing:
+  raph: local_or_free
+  donnie: stronger_reasoning_model
+  mikey: local_or_free
+  april: local_or_free
+  casey: local_or_free
+  splinter: local_or_free
+  shredder: stronger_reasoning_model
+  leo: strongest_available_model
