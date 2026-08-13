@@ -16,7 +16,7 @@ import { ProviderRouter } from './providers/router.js';
 import type { Category, Finding } from './protocol/types.js';
 import { SqliteStore } from './store/sqlite-store.js';
 import { FileStore, type Store } from './store/store.js';
-import type { PublishedFindingRecord, ReviewJob, ReviewRun } from './types.js';
+import type { PublishedFindingRecord, RepoRef, ReviewJob, ReviewRun } from './types.js';
 
 /**
  * Runtime orchestration. This layer gathers context, drives the protocol, and
@@ -78,6 +78,12 @@ export class HalfShellApp {
         if (pending.includes(promise)) this.queues.delete(key);
       }
     }
+  }
+
+  /** Most recently recorded run for a pull request, if one has been saved. */
+  async lastRun(repo: RepoRef, pullNumber: number): Promise<ReviewRun | undefined> {
+    const runs = await this.store.listRuns(repo, pullNumber);
+    return runs.at(-1);
   }
 
   async handle(job: ReviewJob): Promise<void> {
