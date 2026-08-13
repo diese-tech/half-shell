@@ -297,7 +297,12 @@ export class GitHubClient {
     installationId: number,
     repo: RepoRef,
     number: number,
-    review: { body: string; event: 'COMMENT'; commit_id?: string; comments?: ReviewComment[] },
+    review: {
+      body: string;
+      event: 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+      commit_id?: string;
+      comments?: ReviewComment[];
+    },
   ): Promise<{ id: number }> {
     return this.request(
       installationId,
