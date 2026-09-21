@@ -10,6 +10,16 @@ export interface GitHubConfig {
 
 export type StoreKind = 'file' | 'sqlite';
 
+/**
+ * Which review pipeline handles an accepted webhook review job. `v1` is the
+ * existing pipeline (src/pipeline/review.ts) and remains the default so
+ * upgrading Half-Shell never silently changes production behavior — an
+ * operator opts into `council` deliberately. See docs/architecture/
+ * review-policy.md section 21: legacy v1 may stay behind this boundary
+ * until it is intentionally retired.
+ */
+export type ReviewEngineName = 'v1' | 'council';
+
 export interface ReviewConfig {
   maxFiles: number;
   maxPatchChars: number;
@@ -36,6 +46,11 @@ export interface Config {
   providerProblems: string[];
   allowPaidInference: boolean;
   review: ReviewConfig;
+  reviewEngine: ReviewEngineName;
+  /** Directory of persona YAML contracts, used only when reviewEngine is "council". */
+  personasDir: string;
+  /** SQLite path for the council orchestration engine's own store. */
+  councilDatabasePath: string;
 }
 
 const KNOWN_PROVIDERS: Record<string, Partial<ProviderConfig>> = {
@@ -147,14 +162,34 @@ function loadProviders(): { providers: ProviderConfig[]; problems: string[] } {
   return { providers, problems };
 }
 
+const REVIEW_ENGINES: readonly ReviewEngineName[] = ['v1', 'council'];
+
+/**
+ * Fails fast and explicitly on a bad value rather than silently falling
+ * back to some default engine — an operator who typos this must know
+ * immediately, not discover it from which pipeline actually ran.
+ */
+function loadReviewEngine(): ReviewEngineName {
+  const raw = env('HALF_SHELL_REVIEW_ENGINE');
+  if (raw === undefined) return 'v1';
+  if ((REVIEW_ENGINES as readonly string[]).includes(raw)) return raw as ReviewEngineName;
+  throw new Error(
+    `HALF_SHELL_REVIEW_ENGINE must be one of ${REVIEW_ENGINES.join(', ')} (got "${raw}")`,
+  );
+}
+
 export function loadConfig(): Config {
   const inference = loadProviders();
+  const dataDir = env('HALF_SHELL_DATA_DIR') ?? '.half-shell';
   return {
     port: int('PORT', 3000),
     github: loadGitHub(),
     providers: inference.providers,
     providerProblems: inference.problems,
     allowPaidInference: bool('HALF_SHELL_ALLOW_PAID_INFERENCE', false),
+    reviewEngine: loadReviewEngine(),
+    personasDir: env('HALF_SHELL_PERSONAS_DIR') ?? 'config/personas',
+    councilDatabasePath: env('HALF_SHELL_COUNCIL_DATABASE_PATH') ?? `${dataDir}/council.db`,
     review: {
       maxFiles: int('HALF_SHELL_MAX_FILES', 40),
       maxPatchChars: int('HALF_SHELL_MAX_PATCH_CHARS', 12_000),
@@ -164,11 +199,9 @@ export function loadConfig(): Config {
       maxRelatedLookups: nonNegativeInt('HALF_SHELL_MAX_RELATED_LOOKUPS', 30),
       searchCallers: bool('HALF_SHELL_SEARCH_CALLERS', true),
       dryRun: bool('HALF_SHELL_DRY_RUN', false),
-      dataDir: env('HALF_SHELL_DATA_DIR') ?? '.half-shell',
+      dataDir,
       store: env('HALF_SHELL_STORE') === 'sqlite' ? 'sqlite' : 'file',
-      databasePath:
-        env('HALF_SHELL_DATABASE_PATH') ??
-        `${env('HALF_SHELL_DATA_DIR') ?? '.half-shell'}/half-shell.db`,
+      databasePath: env('HALF_SHELL_DATABASE_PATH') ?? `${dataDir}/half-shell.db`,
       excludePatterns: DEFAULT_EXCLUDES,
     },
   };

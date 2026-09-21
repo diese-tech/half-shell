@@ -93,7 +93,9 @@ describe('engine — end to end with fake providers', () => {
     expect(run?.currentPhase).toBe('ARCHIVED');
 
     expect(github.state.reviews).toHaveLength(1);
-    expect(github.state.reviews[0]?.event).toBe('APPROVE');
+    // Half-Shell never grants APPROVE (review-policy.md D004) — a clean
+    // review is still a themed COMMENT.
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
 
     // Shredder was never invoked — early exit actually skipped Sparring.
     const shredderCalls = (deps.providerFor('shredder') as ScriptedModelProvider).calls.filter((c) => c.persona === 'shredder');
@@ -137,6 +139,8 @@ describe('engine — end to end with fake providers', () => {
             outcome: 'publish',
             final_severity: 'high',
             public_reason: 'importRecords still calls load() without the tenant id.',
+            blocking: true,
+            blocking_reason: 'every import throws at runtime',
           },
         ],
         unresolved_uncertainty: [],
@@ -189,6 +193,14 @@ describe('engine — end to end with fake providers', () => {
     // reaches ARCHIVED (LEO_REVIEW handles the missing-lane case), and the
     // missing-lane event is on record for Leo to have been told about it.
     expect((await store.getReviewRun(result.reviewId))?.status).toBe('archived');
+
+    // Fail-safe invariant: even though Leo's own output said "clean_review",
+    // the orchestrator overrides it — in code, not just in the prompt —
+    // because a required lane never completed. Never manufacture confidence.
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+    expect(github.state.reviews[0]?.body).toContain('could not complete this round');
   });
 
   it('deduplicates a repeated webhook delivery for the same review generation', async () => {

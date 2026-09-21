@@ -14,6 +14,14 @@ export type PhaseName =
   | 'followup_verify'
   | 'followup_challenge'
   | 'followup_resolve'
+  // Council orchestration engine phases (src/orchestration/phases/*) — a
+  // separate prompt shape from the v1 phases above, see
+  // src/orchestration/prompt.ts.
+  | 'council_case_file'
+  | 'council_independent_review'
+  | 'council_mentorship'
+  | 'council_sparring'
+  | 'council_leo_review'
   | 'unknown';
 
 export interface StubRequest {
@@ -29,13 +37,24 @@ export type Responder = string | ((request: StubRequest) => string);
 export type Script = Partial<Record<PhaseName, Responder>> & {
   /** Per-persona overrides for lane responses, keyed by persona name. */
   lanes?: Record<string, Responder>;
+  /** Per-persona overrides for INDEPENDENT_REVIEW, keyed by persona name (e.g. "Raphael"). */
+  councilIndependentReview?: Record<string, Responder>;
 };
 
 /**
- * The protocol text names every phase, so only the instruction appended after
- * the role block identifies which phase a prompt belongs to.
+ * The v1 protocol text names every phase by number, so the instruction
+ * appended after the role block identifies which phase a prompt belongs to.
+ * The council engine's own prompts (src/orchestration/prompt.ts) instead
+ * name their phase directly ("Phase: CASE_FILE." etc.) — checked first
+ * since neither prompt shape nests inside the other.
  */
 export function detectPhase(system: string): PhaseName {
+  if (system.includes('Phase: CASE_FILE.')) return 'council_case_file';
+  if (system.includes('Phase: INDEPENDENT_REVIEW.')) return 'council_independent_review';
+  if (system.includes('Phase: MENTORSHIP.')) return 'council_mentorship';
+  if (system.includes('Phase: SPARRING')) return 'council_sparring';
+  if (system.includes('Phase: LEO_REVIEW.')) return 'council_leo_review';
+
   const instruction = system.split('</your_role>').at(-1) ?? '';
   if (instruction.includes('Phase 1')) return 'brief';
   if (instruction.includes('Phase 2')) return 'lane';
@@ -49,7 +68,10 @@ export function detectPhase(system: string): PhaseName {
 }
 
 export function detectPersona(system: string): string {
-  return /^You are (.+?) of The Dojo/.exec(system)?.[1] ?? 'unknown';
+  const dojo = /^You are (.+?) of The Dojo/.exec(system)?.[1];
+  if (dojo) return dojo;
+  const council = /^You are (.+?), .+? on the Half-Shell review council\./.exec(system)?.[1];
+  return council ?? 'unknown';
 }
 
 export interface StubInference {
@@ -81,7 +103,10 @@ export async function startStubInference(script: Script): Promise<StubInference>
       requests.push(record);
 
       const responder =
-        (phase === 'lane' ? script.lanes?.[persona] : undefined) ?? script[phase] ?? '{}';
+        (phase === 'lane' ? script.lanes?.[persona] : undefined) ??
+        (phase === 'council_independent_review' ? script.councilIndependentReview?.[persona] : undefined) ??
+        script[phase] ??
+        '{}';
       const content = typeof responder === 'function' ? responder(record) : responder;
 
       response.writeHead(200, { 'content-type': 'application/json' });

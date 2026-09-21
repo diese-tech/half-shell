@@ -19,7 +19,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["finding_id", "outcome", "public_reason"],
+        "required": ["finding_id", "outcome", "public_reason", "blocking"],
         "properties": {
           "finding_id": { "type": "string", "minLength": 1 },
           "outcome": {
@@ -34,6 +34,14 @@
             "type": "string",
             "minLength": 1,
             "description": "Plain-English reason, safe to publish. For a rejection, narrowing, or severity change this is Leo's recorded reasoning, per Issue #12 section 10."
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "Merge-readiness, independent of final_severity (review-policy.md section 3). Only meaningful when outcome is \"publish\"."
+          },
+          "blocking_reason": {
+            "type": ["string", "null"],
+            "description": "The explicit requirement/acceptance criterion/invariant this finding falsifies, when blocking is true."
           }
         }
       }

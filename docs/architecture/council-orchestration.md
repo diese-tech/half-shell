@@ -5,6 +5,20 @@ knobs) and `config/personas/*.yaml` (character). This document explains how
 they fit together and is not itself authoritative — if it disagrees with the
 code or the config, the code and config win.
 
+## Production wiring
+
+This engine (`src/orchestration/engine.ts`) is reachable from a real GitHub
+webhook through `src/orchestration/app.ts` (`CouncilApp`) and
+`src/reviewEngine.ts` (`ReviewEngineRouter`), selected with
+`HALF_SHELL_REVIEW_ENGINE=council`. `v1` (`src/pipeline/review.ts`, driven
+by `src/app.ts`) remains the default and stays available as a fallback —
+see `docs/architecture/review-policy.md` section 21. Only `review` jobs are
+council-selectable today; `verify`/`reconsider`/`explain` still run through
+v1 regardless of engine selection, because those depend on v1's
+`PublishedFindingRecord` store to resolve which finding a reply belongs to,
+and the council engine has no equivalent cross-generation finding
+reconciliation yet (tracked as a follow-up, not built in this pass).
+
 ## Core authority rule
 
 > Personas investigate, argue, teach, challenge, and recommend. Leonardo
@@ -196,13 +210,22 @@ deterministically.
 ## PUBLICATION
 
 Owned entirely by the orchestrator. Converts Leo's verdict into a GitHub PR
-review outcome using `publication_policy` from `orchestration.yaml`:
+review outcome (`src/orchestration/phases/publication.ts`,
+`determineOutcome`):
 
 | Verdict outcome | GitHub review event |
 |---|---|
-| One or more published findings at/above `blocking_severity_threshold` | `REQUEST_CHANGES` |
+| One or more published findings Leo marked `blocking: true` | `REQUEST_CHANGES` |
 | Published findings exist, none blocking | `COMMENT` |
-| No publishable material findings, review completed | `APPROVE` |
+| No publishable material findings, review completed | `COMMENT` (themed "Shell clear") |
+
+`blocking` is Leo's own explicit per-finding decision (review-policy.md
+section 3, D003/D004) — it is data recorded on the verdict, not a severity
+threshold computed at publication time. Severity is impact; blocking is
+merge-readiness; the two are independent. Half-Shell never grants `APPROVE`,
+even on a clean review — that is a deliberate departure from this
+document's earlier draft, made to reconcile with the canonical
+`docs/architecture/review-policy.md`.
 
 Before sending anything, the orchestrator re-checks
 `current PR head SHA == review_run.head_sha` (see Webhook safety, above). If
@@ -307,7 +330,7 @@ Shredder challenges whether both writes can actually commit concurrently.
 Evidence (Casey's reproduction) answers the challenge. Shredder accepts;
 challenge count for this finding: 1 of 3.
   ↓
-Leo publishes the finding, severity high (at the blocking threshold).
+Leo publishes the finding, severity high, and marks it blocking.
   ↓
 Orchestrator re-checks the PR head SHA, posts REQUEST_CHANGES, records
 github_publication_completed, archives the run.

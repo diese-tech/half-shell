@@ -16,7 +16,7 @@ import { runCaseFile } from './phases/caseFile.js';
 import { runIndependentReview } from './phases/independentReview.js';
 import { runLeoReview } from './phases/leoReview.js';
 import { applyLessons, runMentorship } from './phases/mentorship.js';
-import { DEFAULT_PUBLICATION_POLICY, publish, type PublicationGitHubClient, type PublicationPolicy } from './phases/publication.js';
+import { publish, type PublicationGitHubClient } from './phases/publication.js';
 import { spar } from './phases/sparring.js';
 import type { ModelProvider } from './provider.js';
 import { DEFAULT_CHALLENGE_BUDGET, SparringChallengeTracker, type ChallengeBudgetConfig } from './sparring.js';
@@ -29,7 +29,6 @@ export interface EngineDependencies {
   personas: Map<string, PersonaConfig>;
   providerFor: (persona: PersonaCodename) => ModelProvider;
   githubClient: PublicationGitHubClient;
-  publicationPolicy?: PublicationPolicy;
   challengeBudget?: ChallengeBudgetConfig;
 }
 
@@ -301,6 +300,24 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
         return fail(store, current, 'failed_retryable', result.error ?? 'LEO_REVIEW produced no usable verdict');
       }
       verdict = result.verdict;
+
+      // Fail-safe invariant (review-policy.md section 18): never manufacture
+      // confidence. If a required INDEPENDENT_REVIEW lane failed and no
+      // blocking finding survived anyway, this cannot be published as a
+      // clean verdict — enforced here in code, not left to Leo's prompt,
+      // regardless of what the model itself concluded.
+      const requiredLaneFailed = (await store.listEvents(current.id)).some(
+        (e) => e.phase === 'INDEPENDENT_REVIEW' && e.eventType === 'validation_failed',
+      );
+      const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
+      if (requiredLaneFailed && !anyBlockingPublished && verdict.overallOutcome !== 'incomplete') {
+        verdict = {
+          ...verdict,
+          overallOutcome: 'incomplete',
+          rationale: `${verdict.rationale} Required coverage was incomplete — a required independent-review lane failed — so this cannot be published as a clean verdict.`,
+        };
+      }
+
       await store.saveVerdict(verdict);
       await recordEvent(store, { reviewId: current.id, phase: 'LEO_REVIEW', actor: 'leo', eventType: 'verdict_recorded' });
 
@@ -322,7 +339,7 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
   if (current.currentPhase === 'PUBLICATION') {
     const verdict = await store.getVerdict(current.id);
     if (!verdict) return fail(store, current, 'failed_final', 'reached PUBLICATION with no recorded verdict');
-    const result = await publish(store, deps.githubClient, current, verdict, input.installationId, input.repo, deps.publicationPolicy ?? DEFAULT_PUBLICATION_POLICY);
+    const result = await publish(store, deps.githubClient, current, verdict, input.installationId, input.repo);
     if (result.outcome === 'superseded_stale_sha') {
       return (await store.getReviewRun(current.id)) as ReviewRun;
     }

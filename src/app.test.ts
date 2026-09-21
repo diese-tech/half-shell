@@ -225,7 +225,10 @@ describe('HalfShellApp', () => {
       },
       providers: [],
       providerProblems: [],
-    allowPaidInference: false,
+      allowPaidInference: false,
+      reviewEngine: 'v1',
+      personasDir: 'config/personas',
+      councilDatabasePath: join(dataDir, 'council.db'),
       review: {
         maxFiles: 40,
         maxPatchChars: 5000,

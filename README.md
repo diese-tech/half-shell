@@ -115,27 +115,18 @@ Only findings that survive this process should become public GitHub review comme
 
 The source code lives in this repository, but Half-Shell itself will run as a deployed service. GitHub will send webhook events to that service when relevant repository activity occurs.
 
-Planned event flow includes:
+See `docs/architecture/review-policy.md` for the canonical policy this section summarizes.
 
-- pull request opened
-- pull request synchronized with new commits
-- draft marked ready for review
-- PR conversation comments
-- inline review replies
-- review-thread activity
-- manual Half-Shell commands
+Half-Shell automatically reviews a newly opened non-draft pull request, and a draft pull request when it moves to Ready for Review. A pushed commit after that does not trigger a new automatic review — it only makes the existing review potentially stale until someone invokes Half-Shell again.
 
-The App should be able to respond inside existing review threads so coding agents such as Claude Code, Codex, or other automation can challenge findings, explain changes, and request verification.
-
-Example commands may eventually include:
+The public command surface is intentionally small:
 
 ```text
-@half-shell review
-@half-shell deep review
-@half-shell verify
-@half-shell reconsider
-@half-shell explain
+@half-shell            — review, or re-review the current PR state
+@half-shell explain     — explain the latest review without starting another one
 ```
+
+Replying directly to a Half-Shell finding triggers targeted verification/reconsideration of that finding — this is not a separate slash command, just a reply in the thread. The App responds inside existing review threads so coding agents such as Claude Code, Codex, or other automation can challenge findings, explain changes, and prompt re-verification the same way a human reviewer would.
 
 ## Inference strategy
 

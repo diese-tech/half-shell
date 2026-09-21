@@ -7,10 +7,13 @@ import { join } from 'node:path';
 
 import { HalfShellApp } from '../app.js';
 import type { Config } from '../config.js';
+import { CouncilApp } from '../orchestration/app.js';
+import { OrchestrationStore } from '../orchestration/store.js';
+import { ReviewEngineRouter } from '../reviewEngine.js';
 import { createWebhookServer } from '../server.js';
 import { closeServer, startStubInference, type Script, type StubInference } from './stub-inference.js';
 import { startStubGitHub, type StubGitHub, type StubPullRequest } from './stub-github.js';
-import { defaultScript, SAMPLE_PULL_REQUEST } from './fixtures.js';
+import { defaultScript, defaultCouncilScript, SAMPLE_PULL_REQUEST } from './fixtures.js';
 
 /**
  * Boots the real service against stub GitHub and stub inference servers.
@@ -24,7 +27,10 @@ export const HARNESS_REPO = { owner: 'diese-tech', repo: 'half-shell' };
 export interface Harness {
   github: StubGitHub;
   inference: StubInference;
+  /** The v1 pipeline app — always constructed, since v1 stays available regardless of engine selection. */
   app: HalfShellApp;
+  /** Only set when config.reviewEngine is "council". */
+  council?: { app: CouncilApp; store: OrchestrationStore };
   webhookUrl: string;
   config: Config;
   /** Deliver a signed webhook exactly as GitHub would. */
@@ -38,12 +44,17 @@ export interface HarnessOptions {
   script?: Script;
   pullRequest?: StubPullRequest;
   configure?: (config: Config) => void;
+  /** Which pipeline the harness's own webhook server routes review jobs to. Defaults to v1. */
+  reviewEngine?: Config['reviewEngine'];
 }
 
 const WEBHOOK_SECRET = 'harness-secret';
 
 export async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
-  const inference = await startStubInference(options.script ?? defaultScript());
+  const reviewEngine = options.reviewEngine ?? 'v1';
+  const inference = await startStubInference(
+    options.script ?? (reviewEngine === 'council' ? defaultCouncilScript() : defaultScript()),
+  );
   const github = await startStubGitHub(options.pullRequest ?? SAMPLE_PULL_REQUEST);
   const dataDir = await mkdtemp(join(tmpdir(), 'half-shell-harness-'));
 
@@ -64,6 +75,9 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     ],
     providerProblems: [],
     allowPaidInference: false,
+    reviewEngine,
+    personasDir: 'config/personas',
+    councilDatabasePath: join(dataDir, 'council.db'),
     review: {
       maxFiles: 40,
       maxPatchChars: 12_000,
@@ -82,7 +96,10 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   options.configure?.(config);
 
   const app = new HalfShellApp(config);
-  const server: Server = createWebhookServer(app, config);
+  const councilStore = config.reviewEngine === 'council' ? new OrchestrationStore(config.councilDatabasePath) : undefined;
+  const councilApp = councilStore ? new CouncilApp(config, { store: councilStore }) : undefined;
+  const router = new ReviewEngineRouter(app, councilApp, config.reviewEngine);
+  const server: Server = createWebhookServer(router, config);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const webhookUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/webhook`;
 
@@ -90,6 +107,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     github,
     inference,
     app,
+    council: councilApp && councilStore ? { app: councilApp, store: councilStore } : undefined,
     webhookUrl,
     config,
     async deliver(event, payload) {
@@ -118,7 +136,8 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     async stop() {
       await closeServer(server);
       // Let in-flight jobs finish writing before the data directory goes away.
-      await app.idle();
+      await router.idle();
+      councilStore?.close();
       await github.close();
       await inference.close();
       await rm(dataDir, { recursive: true, force: true });

@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import type { HalfShellApp } from './app.js';
 import type { Config } from './config.js';
 import { toReviewJob } from './github/events.js';
 import { verifySignature } from './github/signature.js';
 import { log, errorFields } from './logger.js';
+import type { ReviewEngineApp } from './reviewEngine.js';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
@@ -32,7 +32,7 @@ function send(response: ServerResponse, status: number, body: unknown): void {
   response.end(payload);
 }
 
-export function createWebhookServer(app: HalfShellApp, config: Config): Server {
+export function createWebhookServer(app: ReviewEngineApp, config: Config): Server {
   const secret = config.github?.webhookSecret;
   const appLogin = config.github?.appLogin ?? 'half-shell[bot]';
 
@@ -86,6 +86,7 @@ export function createWebhookServer(app: HalfShellApp, config: Config): Server {
         delivery: deliveryId,
         kind: job.kind,
         pr: job.pullNumber,
+        reviewEngine: job.kind === 'review' ? config.reviewEngine : 'v1',
       });
       app.enqueue(job).catch((error) => log.error('job rejected', errorFields(error)));
     })().catch((error) => {

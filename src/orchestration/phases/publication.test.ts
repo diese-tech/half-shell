@@ -38,7 +38,16 @@ function verdict(overrides: Partial<Verdict> = {}): Verdict {
     reviewer: 'leonardo',
     overallOutcome: 'blocking_findings_published',
     rationale: 'One stale call site fails on every import.',
-    findings: [{ findingId: 'finding_1', outcome: 'publish', finalSeverity: 'high', publicReason: 'Fails on every import.' }],
+    findings: [
+      {
+        findingId: 'finding_1',
+        outcome: 'publish',
+        finalSeverity: 'high',
+        publicReason: 'Fails on every import.',
+        blocking: true,
+        blockingReason: 'Every import throws at runtime.',
+      },
+    ],
     unresolvedUncertainty: [],
     createdAt: '2026-08-13T00:00:00.000Z',
     ...overrides,
@@ -46,24 +55,40 @@ function verdict(overrides: Partial<Verdict> = {}): Verdict {
 }
 
 describe('determineOutcome', () => {
-  it('maps a blocking-severity published finding to REQUEST_CHANGES', () => {
+  it('maps a published finding Leo marked blocking to REQUEST_CHANGES', () => {
     expect(determineOutcome(verdict())).toBe('REQUEST_CHANGES');
   });
 
-  it('maps a published-but-non-blocking finding to COMMENT', () => {
-    const v = verdict({ findings: [{ findingId: 'f1', outcome: 'publish', finalSeverity: 'low', publicReason: 'minor' }] });
+  it('maps a published-but-non-blocking finding to COMMENT — severity alone never decides blocking', () => {
+    const v = verdict({
+      findings: [
+        { findingId: 'f1', outcome: 'publish', finalSeverity: 'critical', publicReason: 'minor', blocking: false, blockingReason: null },
+      ],
+    });
     expect(determineOutcome(v)).toBe('COMMENT');
   });
 
-  it('maps no publishable findings to APPROVE', () => {
-    const v = verdict({ findings: [{ findingId: 'f1', outcome: 'reject', finalSeverity: null, publicReason: 'not material' }] });
-    expect(determineOutcome(v)).toBe('APPROVE');
+  it('maps a low-severity finding Leo marked blocking to REQUEST_CHANGES — priority and blocking are independent', () => {
+    const v = verdict({
+      findings: [
+        {
+          findingId: 'f1',
+          outcome: 'publish',
+          finalSeverity: 'low',
+          publicReason: 'violates the stated acceptance criterion',
+          blocking: true,
+          blockingReason: 'falsifies an explicit requirement',
+        },
+      ],
+    });
+    expect(determineOutcome(v)).toBe('REQUEST_CHANGES');
   });
 
-  it('respects a configured blocking threshold', () => {
-    const v = verdict({ findings: [{ findingId: 'f1', outcome: 'publish', finalSeverity: 'medium', publicReason: 'x' }] });
-    expect(determineOutcome(v, { blockingSeverityThreshold: 'medium' })).toBe('REQUEST_CHANGES');
-    expect(determineOutcome(v, { blockingSeverityThreshold: 'critical' })).toBe('COMMENT');
+  it('never grants APPROVE — a clean review with no publishable findings is a themed COMMENT', () => {
+    const v = verdict({
+      findings: [{ findingId: 'f1', outcome: 'reject', finalSeverity: null, publicReason: 'not material', blocking: false, blockingReason: null }],
+    });
+    expect(determineOutcome(v)).toBe('COMMENT');
   });
 });
 
@@ -77,8 +102,8 @@ describe('renderReviewBody — public output excludes internal chatter', () => {
   it('never mentions rejected findings or their reasoning in the public body', () => {
     const v = verdict({
       findings: [
-        { findingId: 'f1', outcome: 'publish', finalSeverity: 'high', publicReason: 'the published one' },
-        { findingId: 'f2', outcome: 'reject', finalSeverity: null, publicReason: 'internal reasoning for rejecting f2' },
+        { findingId: 'f1', outcome: 'publish', finalSeverity: 'high', publicReason: 'the published one', blocking: true, blockingReason: 'x' },
+        { findingId: 'f2', outcome: 'reject', finalSeverity: null, publicReason: 'internal reasoning for rejecting f2', blocking: false, blockingReason: null },
       ],
     });
     const body = renderReviewBody(v);
