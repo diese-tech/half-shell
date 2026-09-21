@@ -24,6 +24,15 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
 # The canonical review protocol. The runtime reads it on every review.
 COPY --from=build /app/skills ./skills
+# Read by HALF_SHELL_REVIEW_ENGINE=council: persona YAML (src/personas/loader.ts,
+# default HALF_SHELL_PERSONAS_DIR=config/personas) and the council engine's
+# JSON Schemas (src/orchestration/schema.ts resolves them two levels up from
+# dist/orchestration/, i.e. here). Without these the first council review
+# fails with ENOENT — the queued job then logs and drops it silently, so a
+# healthy-looking service would accept every council webhook and never
+# actually review anything.
+COPY config ./config
+COPY schemas ./schemas
 
 # Persisted findings and run records live here; mount a volume in production.
 RUN mkdir -p /data && chown node:node /data

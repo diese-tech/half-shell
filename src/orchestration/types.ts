@@ -210,6 +210,15 @@ export interface VerdictFindingDecision {
   outcome: VerdictOutcome;
   finalSeverity: Severity | null;
   publicReason: string;
+  /**
+   * Merge-readiness, decided by Leo alone (review-policy.md section 3,
+   * D003): a P2 can block when it falsifies an explicit requirement, and a
+   * P1 is not blocking merely because of its severity. Publication reads
+   * this field directly rather than deriving blocking from a severity
+   * threshold.
+   */
+  blocking: boolean;
+  blockingReason: string | null;
 }
 
 export type OverallOutcome =

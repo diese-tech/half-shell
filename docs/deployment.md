@@ -41,6 +41,19 @@ HALF_SHELL_PROVIDER_GROQ_API_KEY=...
 `HALF_SHELL_PROVIDERS` is an ordered fallback chain. Providers marked `paid`
 are skipped entirely unless `HALF_SHELL_ALLOW_PAID_INFERENCE=true`.
 
+### Review engine
+
+`HALF_SHELL_REVIEW_ENGINE` selects which review pipeline handles an accepted
+webhook review job: `v1` (default, the existing pipeline) or `council` (the
+Council orchestration engine, `src/orchestration/`). An unrecognized value
+fails startup immediately rather than silently falling back. `v1` stays
+available and fully functional regardless of this setting — switching to
+`council` is a deliberate opt-in, not a cutover; see
+`docs/architecture/council-orchestration.md` for what the council engine
+does differently. `council` mode also reads `HALF_SHELL_PERSONAS_DIR`
+(default `config/personas`) and `HALF_SHELL_COUNCIL_DATABASE_PATH` (default
+`<HALF_SHELL_DATA_DIR>/council.db`).
+
 For anything longer-lived than a container, set `HALF_SHELL_STORE=sqlite`. The
 default file store keeps one JSON file per pull request and is fine for a
 single instance.

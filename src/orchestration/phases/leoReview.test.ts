@@ -55,11 +55,55 @@ describe('runLeoReview', () => {
     const provider = new ScriptedModelProvider({}, () => ({
       overall_outcome: 'blocking_findings_published',
       rationale: 'One strong finding is enough on its own.',
-      findings: [{ finding_id: f.id, outcome: 'publish', final_severity: 'high', public_reason: 'This fails on every request.' }],
+      findings: [
+        {
+          finding_id: f.id,
+          outcome: 'publish',
+          final_severity: 'high',
+          public_reason: 'This fails on every request.',
+          blocking: true,
+          blocking_reason: 'fails on every request',
+        },
+      ],
       unresolved_uncertainty: [],
     }));
     const result = await runLeoReview(provider, minimalPersonaConfig({ codename: 'leo' }), 'rev_1', [f], '[]');
     expect(result.verdict?.overallOutcome).toBe('blocking_findings_published');
+    expect(result.verdict?.findings[0]?.blocking).toBe(true);
+  });
+
+  it('rejects a publish decision that omits the blocking merge-readiness decision, rather than defaulting it to false', async () => {
+    const f = finding();
+    const provider = new ScriptedModelProvider({}, () => ({
+      overall_outcome: 'blocking_findings_published',
+      rationale: 'Leo forgot to decide blocking.',
+      // No `blocking` key at all — this must fail schema validation, not
+      // silently become "not blocking."
+      findings: [{ finding_id: f.id, outcome: 'publish', final_severity: 'high', public_reason: 'This fails on every request.' }],
+      unresolved_uncertainty: [],
+    }));
+    const result = await runLeoReview(provider, minimalPersonaConfig({ codename: 'leo' }), 'rev_1', [f], '[]');
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a publish decision whose blocking value is not a boolean', async () => {
+    const f = finding();
+    const provider = new ScriptedModelProvider({}, () => ({
+      overall_outcome: 'blocking_findings_published',
+      rationale: 'Leo gave a non-boolean blocking value.',
+      findings: [
+        {
+          finding_id: f.id,
+          outcome: 'publish',
+          final_severity: 'high',
+          public_reason: 'This fails on every request.',
+          blocking: 'yes',
+        },
+      ],
+      unresolved_uncertainty: [],
+    }));
+    const result = await runLeoReview(provider, minimalPersonaConfig({ codename: 'leo' }), 'rev_1', [f], '[]');
+    expect(result.ok).toBe(false);
   });
 
   it('forces reviewer to be literally "leonardo" regardless of what the model returns', async () => {

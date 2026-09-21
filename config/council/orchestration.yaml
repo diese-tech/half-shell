@@ -131,19 +131,19 @@ challenge_budget:
   extend_only_if_new_evidence: true
 
 # How Leo's verdict becomes a GitHub PR review outcome. Deterministic and
-# configurable, never invented per-run. Applied in
-# src/orchestration/phases/publication.ts.
+# never invented per-run. Applied in src/orchestration/phases/publication.ts.
+#
+# Blocking is Leo's own explicit per-finding decision (review-policy.md
+# section 3, D003/D004) — it is data on the verdict, not a severity
+# threshold computed here. A P2 can block when it falsifies an explicit
+# acceptance criterion; a P1 is not blocking merely because of its
+# severity. Half-Shell never grants APPROVE, even on a clean review.
 publication_policy:
-  # A published finding counts as "blocking" when its final_severity is at
-  # or above this threshold.
-  blocking_severity_threshold: high
   request_changes_when:
-    - one_or_more_published_findings_are_blocking
+    - one_or_more_published_findings_are_marked_blocking
   comment_when:
     - published_findings_exist_but_none_are_blocking
-  approve_when:
     - no_publishable_material_findings
-    - review_completed_successfully
 
 # Never short-circuit solely on file type or "no logic change" — see Issue
 # #12 section 16. Enforced in src/orchestration/earlyExit.ts.

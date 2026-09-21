@@ -117,12 +117,15 @@ describe('end to end', () => {
     expect(harness.inference.requests.length).toBe(before);
   });
 
-  it('stays silent on a second review that finds nothing new', async () => {
+  it('stays silent on an explicit re-review that finds nothing new', async () => {
     harness = await startHarness();
     await harness.deliver('pull_request', pullRequestEvent('opened'));
     await harness.waitFor(() => harness!.github.reviews.length > 0, 'the first review');
 
+    // A push alone does not trigger this second review (review-policy.md
+    // D009) — only the explicit `@half-shell` below does.
     await harness.deliver('pull_request', pullRequestEvent('synchronize'));
+    await harness.deliver('issue_comment', issueCommentEvent('@half-shell'));
     await harness.waitFor(
       () => harness!.inference.requests.some((request, index) => request.phase === 'verdict' && index > 5),
       'the second review to finish',
@@ -132,7 +135,7 @@ describe('end to end', () => {
     expect(harness.github.reviews).toHaveLength(1);
   });
 
-  it('re-anchors a surviving finding after a force-push moves it', async () => {
+  it('re-anchors a surviving finding on the next explicit @half-shell after a force-push moves it', async () => {
     harness = await startHarness();
     await harness.deliver('pull_request', pullRequestEvent('opened'));
     await harness.waitFor(() => harness!.github.reviews.length > 0, 'the first review');
@@ -162,7 +165,15 @@ describe('end to end', () => {
       ],
     });
 
-    await harness.deliver('pull_request', pullRequestEvent('synchronize'));
+    // A push alone does not auto-trigger a new review (review-policy.md
+    // D009) — and so does not re-anchor anything either. The PR is merely
+    // stale until someone says `@half-shell` again.
+    const status = await harness.deliver('pull_request', pullRequestEvent('synchronize'));
+    expect(status).toBe(202);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(harness.github.replies).toHaveLength(0);
+
+    await harness.deliver('issue_comment', issueCommentEvent('@half-shell'));
     await harness.waitFor(() => harness!.github.replies.length > 0, 'the re-anchor reply');
 
     expect(harness.github.replies[0]?.commentId).toBe(thread.id);

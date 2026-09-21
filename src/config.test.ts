@@ -37,3 +37,26 @@ describe('related-context settings', () => {
     expect(loadConfig().review.maxRelatedLookups).toBe(0);
   });
 });
+
+describe('review engine selection', () => {
+  afterEach(() => {
+    delete process.env['HALF_SHELL_REVIEW_ENGINE'];
+  });
+
+  it('defaults to v1 when unset, preserving current production behavior', () => {
+    expect(loadConfig().reviewEngine).toBe('v1');
+  });
+
+  it('honours an explicit v1 or council selection', () => {
+    process.env['HALF_SHELL_REVIEW_ENGINE'] = 'v1';
+    expect(loadConfig().reviewEngine).toBe('v1');
+
+    process.env['HALF_SHELL_REVIEW_ENGINE'] = 'council';
+    expect(loadConfig().reviewEngine).toBe('council');
+  });
+
+  it('fails loudly on an invalid engine rather than silently falling back', () => {
+    process.env['HALF_SHELL_REVIEW_ENGINE'] = 'turtle-power';
+    expect(() => loadConfig()).toThrow(/HALF_SHELL_REVIEW_ENGINE/);
+  });
+});

@@ -16,13 +16,24 @@ function delivery(event: string, payload: Record<string, unknown>) {
 const REPO = { owner: { login: 'diese-tech' }, name: 'half-shell' };
 
 describe('parseCommand', () => {
-  it('recognizes the documented commands', () => {
+  it('treats a bare mention as a review — the sole public review/re-review invocation', () => {
+    expect(parseCommand('@half-shell')).toEqual({ kind: 'review', depth: 'standard' });
+    expect(parseCommand('hey @half-shell take a look')).toEqual({ kind: 'review', depth: 'standard' });
+  });
+
+  it('reads back the latest review without starting a new one', () => {
+    expect(parseCommand('@half-shell explain')).toEqual({ kind: 'explain', depth: 'standard' });
+  });
+
+  it('treats retired public keywords as a plain review rather than a distinct command', () => {
+    // review-policy.md removes `review`, `deep review`, `verify`, `reconsider`,
+    // and `cancel` from the public surface (D001/D005/D006/D060) — there is
+    // one adaptive review mode, so any of these now just falls through to it.
     expect(parseCommand('@half-shell review')).toEqual({ kind: 'review', depth: 'standard' });
-    expect(parseCommand('@half-shell deep review')).toEqual({ kind: 'review', depth: 'deep' });
-    expect(parseCommand('please @half-shell verify now')).toEqual({
-      kind: 'verify',
-      depth: 'standard',
-    });
+    expect(parseCommand('@half-shell deep review')).toEqual({ kind: 'review', depth: 'standard' });
+    expect(parseCommand('please @half-shell verify now')).toEqual({ kind: 'review', depth: 'standard' });
+    expect(parseCommand('@half-shell reconsider')).toEqual({ kind: 'review', depth: 'standard' });
+    expect(parseCommand('@half-shell cancel')).toEqual({ kind: 'review', depth: 'standard' });
   });
 
   it('ignores unrelated text', () => {
@@ -49,7 +60,7 @@ describe('toReviewJob', () => {
 
   it('ignores drafts until they are marked ready', () => {
     const payload = {
-      action: 'synchronize',
+      action: 'opened',
       installation: { id: 7 },
       sender: { login: 'dev' },
       repository: REPO,
@@ -59,6 +70,28 @@ describe('toReviewJob', () => {
 
     const ready = { ...payload, action: 'ready_for_review' };
     expect(toReviewJob(delivery('pull_request', ready), APP_LOGIN)?.kind).toBe('review');
+  });
+
+  it('does not auto-trigger a full review on synchronize — pushes only make the prior review stale', () => {
+    const payload = {
+      action: 'synchronize',
+      installation: { id: 7 },
+      sender: { login: 'dev' },
+      repository: REPO,
+      pull_request: { number: 12, draft: false },
+    };
+    expect(toReviewJob(delivery('pull_request', payload), APP_LOGIN)).toBeUndefined();
+  });
+
+  it('does not auto-trigger on reopened either — re-review stays explicit', () => {
+    const payload = {
+      action: 'reopened',
+      installation: { id: 7 },
+      sender: { login: 'dev' },
+      repository: REPO,
+      pull_request: { number: 12, draft: false },
+    };
+    expect(toReviewJob(delivery('pull_request', payload), APP_LOGIN)).toBeUndefined();
   });
 
   it('ignores its own comments so it cannot review itself in a loop', () => {

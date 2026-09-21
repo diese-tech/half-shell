@@ -9,15 +9,7 @@
 import type { RepoRef } from '../../types.js';
 import { recordEvent } from '../events.js';
 import type { OrchestrationStore } from '../store.js';
-import type { GitHubReviewOutcome, ReviewRun, Severity, Verdict } from '../types.js';
-
-const SEVERITY_RANK: Record<Severity, number> = { low: 1, medium: 2, high: 3, critical: 4 };
-
-export interface PublicationPolicy {
-  blockingSeverityThreshold: Severity;
-}
-
-export const DEFAULT_PUBLICATION_POLICY: PublicationPolicy = { blockingSeverityThreshold: 'high' };
+import type { GitHubReviewOutcome, ReviewRun, Verdict } from '../types.js';
 
 /** Everything Publication needs from the GitHub client — a structural subset GitHubClient already satisfies. */
 export interface PublicationGitHubClient {
@@ -34,24 +26,43 @@ export interface PublicationGitHubClient {
   ): Promise<{ id: number }>;
 }
 
-/** Deterministic mapping from a verdict's published findings to a GitHub review outcome. */
-export function determineOutcome(verdict: Verdict, policy: PublicationPolicy = DEFAULT_PUBLICATION_POLICY): GitHubReviewOutcome {
+/**
+ * Deterministic mapping from a verdict's published findings to a GitHub
+ * review outcome (review-policy.md section 3, D004): one or more blocking
+ * published findings request changes, non-blocking published findings only
+ * get a comment, and a clean review is also a themed comment — Half-Shell
+ * does not grant APPROVE, ever, regardless of how clean the review is.
+ * `blocking` is Leo's own explicit per-finding decision (set in
+ * LEO_REVIEW), never re-derived here from severity: severity is impact,
+ * blocking is merge-readiness, and the two are independent dimensions.
+ *
+ * An `incomplete` overall outcome always maps to a themed no-verdict
+ * COMMENT (review-policy.md section 3), checked before blocking findings
+ * are even considered. Nothing in the schema stops a verdict from claiming
+ * `incomplete` while still carrying a finding marked blocking — an
+ * incomplete review has no merge-readiness authority to assert either way,
+ * so it must never surface as REQUEST_CHANGES.
+ */
+export function determineOutcome(verdict: Verdict): GitHubReviewOutcome {
+  if (verdict.overallOutcome === 'incomplete') return 'COMMENT';
   const published = verdict.findings.filter((f) => f.outcome === 'publish');
-  if (published.length === 0) return 'APPROVE';
-  const blocking = published.some(
-    (f) => f.finalSeverity !== null && SEVERITY_RANK[f.finalSeverity] >= SEVERITY_RANK[policy.blockingSeverityThreshold],
-  );
+  const blocking = published.some((f) => f.blocking);
   return blocking ? 'REQUEST_CHANGES' : 'COMMENT';
 }
 
 export function renderReviewBody(verdict: Verdict): string {
   const published = verdict.findings.filter((f) => f.outcome === 'publish');
   const lines = ['## Half-Shell Council Review', ''];
-  if (published.length === 0) {
-    lines.push('The Dojo found nothing that met the publication standard.');
+  if (verdict.overallOutcome === 'incomplete') {
+    lines.push(
+      'The Dojo could not complete this round with the required coverage. No clean verdict is issued — `@half-shell` to retry.',
+    );
+  } else if (published.length === 0) {
+    lines.push('The Dojo found nothing that met the publication standard. Shell clear.');
   } else {
     for (const finding of published) {
-      lines.push(`**${finding.finalSeverity ?? 'unrated'}** — ${finding.publicReason}`);
+      const tag = finding.blocking ? 'BLOCKING' : (finding.finalSeverity ?? 'non-blocking');
+      lines.push(`**${tag}** — ${finding.publicReason}`);
       lines.push('');
     }
   }
@@ -78,7 +89,6 @@ export async function publish(
   verdict: Verdict,
   installationId: number,
   repo: RepoRef,
-  policy: PublicationPolicy = DEFAULT_PUBLICATION_POLICY,
 ): Promise<PublishResult> {
   const existingEvents = await store.listEvents(run.id);
   const alreadyCompleted = existingEvents.find((e) => e.eventType === 'github_publication_completed');
@@ -109,7 +119,7 @@ export async function publish(
     eventType: 'github_publication_started',
   });
 
-  const githubReviewOutcome = determineOutcome(verdict, policy);
+  const githubReviewOutcome = determineOutcome(verdict);
   const body = renderReviewBody(verdict);
   const posted = await client.createReview(installationId, repo, run.pullRequestNumber, {
     body,

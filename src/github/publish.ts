@@ -231,7 +231,7 @@ function renderBody(
     '',
     '</details>',
     '',
-    'Reply in a thread to challenge a finding, or comment `@half-shell verify` after pushing a fix.',
+    'Reply in a thread to challenge a finding, or comment `@half-shell` again after pushing a fix.',
   );
 
   return sections.join('\n');

@@ -8,7 +8,9 @@
       "finding_id": "finding_01J8Z9K4RH8W7S3Y5N6P7Q8R9S",
       "outcome": "publish",
       "final_severity": "high",
-      "public_reason": "importRecords still calls load() without the now-required tenant id, so every import throws at runtime."
+      "public_reason": "importRecords still calls load() without the now-required tenant id, so every import throws at runtime.",
+      "blocking": true,
+      "blocking_reason": "Every import throws at runtime, so the PR cannot merge in a working state."
     }
   ],
   "unresolved_uncertainty": [],

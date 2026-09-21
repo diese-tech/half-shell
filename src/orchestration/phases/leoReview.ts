@@ -27,11 +27,19 @@ const INSTRUCTION = [
   '      "finding_id": "...",',
   '      "outcome": "publish|reject|merge|narrow|raise_severity|lower_severity|request_more_investigation",',
   '      "final_severity": "critical|high|medium|low|null",',
-  '      "public_reason": "plain-English reason, safe to publish as-is"',
+  '      "public_reason": "plain-English reason, safe to publish as-is",',
+  '      "blocking": true/false,',
+  '      "blocking_reason": "the requirement/criterion/invariant this violates, or null"',
   '    }',
   '  ],',
   '  "unresolved_uncertainty": ["material unknowns left over, if any"]',
   '}',
+  '',
+  'blocking is true only when the PR cannot truthfully satisfy an explicit',
+  'requirement, acceptance criterion, or safety invariant while this finding',
+  'stands. Severity never decides this by itself — a low-severity finding can',
+  'block and a high-severity one can be non-blocking. blocking must be false,',
+  'and blocking_reason null, whenever outcome is not "publish".',
 ].join('\n');
 
 export interface LeoReviewResult {
@@ -67,12 +75,30 @@ export async function runLeoReview(
       lastError = 'response was not valid JSON';
       continue;
     }
+    const findings = Array.isArray(parsed['findings'])
+      ? (parsed['findings'] as Record<string, unknown>[]).map((f) =>
+          f['outcome'] === 'publish'
+            ? // Pass `blocking` through unchanged for a publish decision — do
+              // NOT coerce a missing or malformed value to `false` here. Leo's
+              // own prompt is not the enforcement layer: schema.ts's
+              // `required: ["blocking"]` + `type: boolean` must be the thing
+              // that rejects a model that omitted or malformed the merge-
+              // readiness decision, forcing a retry instead of silently
+              // becoming "not blocking."
+              f
+            : // blocking is only meaningful for a published finding; forcing
+              // it here for every other outcome is not a coercion risk since
+              // the schema treats this as normalized data, not the model's
+              // own claim.
+              { ...f, blocking: false, blocking_reason: null },
+        )
+      : [];
     const candidate = {
       review_id: reviewId,
       reviewer: 'leonardo',
       overall_outcome: parsed['overall_outcome'],
       rationale: parsed['rationale'],
-      findings: parsed['findings'] ?? [],
+      findings,
       unresolved_uncertainty: parsed['unresolved_uncertainty'] ?? [],
       created_at: new Date().toISOString(),
     };
@@ -91,6 +117,8 @@ function fromSchema(value: Record<string, unknown>): Verdict {
     outcome: Verdict['findings'][number]['outcome'];
     final_severity: Verdict['findings'][number]['finalSeverity'];
     public_reason: string;
+    blocking: boolean;
+    blocking_reason: string | null;
   }[];
   return {
     reviewId: value['review_id'] as string,
@@ -102,6 +130,8 @@ function fromSchema(value: Record<string, unknown>): Verdict {
       outcome: f.outcome,
       finalSeverity: f.final_severity,
       publicReason: f.public_reason,
+      blocking: f.blocking,
+      blockingReason: f.blocking_reason ?? null,
     })),
     unresolvedUncertainty: value['unresolved_uncertainty'] as string[],
     createdAt: value['created_at'] as string,

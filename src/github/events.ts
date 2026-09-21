@@ -6,7 +6,19 @@ export interface WebhookDelivery {
   payload: Record<string, any>;
 }
 
-const COMMAND = /@half-shell\s+(deep\s+review|review|verify|reconsider|explain)\b/i;
+/**
+ * The public command surface is intentionally small (docs/architecture/
+ * review-policy.md section 1, decisions D001/D005/D006/D008): bare
+ * `@half-shell` reviews or re-reviews the current PR state, and
+ * `@half-shell explain` reads back the latest review without starting a
+ * new one. `review`, `deep review`, `verify`, `reconsider`, and `cancel`
+ * are no longer distinct public commands — verification/reconsideration
+ * remain internal operations the orchestrator selects itself (see the
+ * implicit-reply handling below), and any of those old words typed after
+ * the mention just falls through to a plain review rather than doing
+ * nothing, since a mention with trailing text is still a mention.
+ */
+const MENTION = /@half-shell\b(?:\s+(\S+))?/i;
 
 export interface ParsedCommand {
   kind: JobKind;
@@ -15,23 +27,11 @@ export interface ParsedCommand {
 
 export function parseCommand(body: string | undefined | null): ParsedCommand | undefined {
   if (!body) return undefined;
-  const match = COMMAND.exec(body);
+  const match = MENTION.exec(body);
   if (!match) return undefined;
-  const raw = (match[1] ?? '').toLowerCase().replace(/\s+/g, ' ');
-  switch (raw) {
-    case 'deep review':
-      return { kind: 'review', depth: 'deep' };
-    case 'review':
-      return { kind: 'review', depth: 'standard' };
-    case 'verify':
-      return { kind: 'verify', depth: 'standard' };
-    case 'reconsider':
-      return { kind: 'reconsider', depth: 'standard' };
-    case 'explain':
-      return { kind: 'explain', depth: 'standard' };
-    default:
-      return undefined;
-  }
+  const keyword = (match[1] ?? '').toLowerCase().replace(/[^a-z]/g, '');
+  if (keyword === 'explain') return { kind: 'explain', depth: 'standard' };
+  return { kind: 'review', depth: 'standard' };
 }
 
 /**
@@ -55,13 +55,16 @@ export function toReviewJob(
   const base = { repo, installationId, deliveryId: delivery.deliveryId };
 
   if (event === 'pull_request') {
+    // Automatic review triggers (review-policy.md section 1, D009/D010):
+    // a newly opened non-draft PR, or a draft moving to ready for review.
+    // A later `synchronize` (pushed commits) does not auto-trigger a new
+    // full review — the PR just becomes potentially stale until someone
+    // (or something) says `@half-shell` again.
     const action = String(payload['action'] ?? '');
     const pr = payload['pull_request'];
     if (!pr) return undefined;
-    if (pr.draft && action !== 'ready_for_review') return undefined;
-    if (!['opened', 'reopened', 'synchronize', 'ready_for_review'].includes(action)) {
-      return undefined;
-    }
+    const eligible = action === 'ready_for_review' || (action === 'opened' && !pr.draft);
+    if (!eligible) return undefined;
     return { ...base, kind: 'review', depth: 'standard', pullNumber: Number(pr.number) };
   }
 
@@ -94,10 +97,15 @@ export function toReviewJob(
     // without an explicit command; unrelated threads need one.
     const isReply = Boolean(comment.in_reply_to_id);
     if (!command && !isReply) return undefined;
+    // A reply is about that specific finding — targeted verification/
+    // reconsideration (review-policy.md D007), not a fresh full review —
+    // regardless of what word, if any, follows the mention. `explain`
+    // stays read-only even inside a thread (D008).
+    const kind: JobKind = command?.kind === 'explain' ? 'explain' : isReply ? 'verify' : 'review';
     return {
       ...base,
-      kind: command?.kind ?? 'verify',
-      depth: command?.depth ?? 'standard',
+      kind,
+      depth: 'standard',
       pullNumber: Number(pr.number),
       thread: {
         commentId: Number(comment.id),

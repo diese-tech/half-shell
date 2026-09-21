@@ -16,8 +16,8 @@ import { runCaseFile } from './phases/caseFile.js';
 import { runIndependentReview } from './phases/independentReview.js';
 import { runLeoReview } from './phases/leoReview.js';
 import { applyLessons, runMentorship } from './phases/mentorship.js';
-import { DEFAULT_PUBLICATION_POLICY, publish, type PublicationGitHubClient, type PublicationPolicy } from './phases/publication.js';
-import { spar } from './phases/sparring.js';
+import { publish, type PublicationGitHubClient } from './phases/publication.js';
+import { confirmCleanReview, spar } from './phases/sparring.js';
 import type { ModelProvider } from './provider.js';
 import { DEFAULT_CHALLENGE_BUDGET, SparringChallengeTracker, type ChallengeBudgetConfig } from './sparring.js';
 import type { OrchestrationStore } from './store.js';
@@ -29,7 +29,6 @@ export interface EngineDependencies {
   personas: Map<string, PersonaConfig>;
   providerFor: (persona: PersonaCodename) => ModelProvider;
   githubClient: PublicationGitHubClient;
-  publicationPolicy?: PublicationPolicy;
   challengeBudget?: ChallengeBudgetConfig;
 }
 
@@ -275,6 +274,48 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
           }
         }
         await store.saveFindings(settled);
+      } else {
+        // Early exit skips the per-finding challenge loop (there is nothing
+        // to challenge), but Shredder's participation is still required by
+        // policy — review-policy.md section 17, D050. Without this, a clean
+        // review could publish having never actually invited its adversary,
+        // which is exactly the manufactured confidence the fail-safe below
+        // exists to prevent.
+        const packet = await store.getEvidencePacket(current.id);
+        const confirmation = await confirmCleanReview(
+          deps.providerFor('shredder'),
+          persona(deps, 'shredder'),
+          JSON.stringify(packet ?? {}),
+        );
+        if (!confirmation.ok) {
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'validation_failed',
+            content: confirmation.note,
+          });
+        } else if (!confirmation.concurs) {
+          // Shredder objects, but there is no CouncilFinding to attach this
+          // to — the independent lanes never produced one. Recorded so the
+          // fail-safe below can see it and refuse a clean verdict; this is
+          // deliberately not synthesized into a fabricated finding.
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'observation_recorded',
+            content: confirmation.note || 'objects to treating this review as clean',
+          });
+        } else {
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'challenge_accepted',
+            content: confirmation.note || 'concurs: nothing here warrants a challenge',
+          });
+        }
       }
     }
     await completePhase(store, current);
@@ -301,6 +342,44 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
         return fail(store, current, 'failed_retryable', result.error ?? 'LEO_REVIEW produced no usable verdict');
       }
       verdict = result.verdict;
+
+      // Fail-safe invariant (review-policy.md section 18, D050): never
+      // manufacture confidence. Enforced here in code, not left to Leo's
+      // prompt, regardless of what the model itself concluded. Two ways
+      // required coverage can be missing:
+      const requiredLaneFailed = (await store.listEvents(current.id)).some(
+        (e) => e.phase === 'INDEPENDENT_REVIEW' && e.eventType === 'validation_failed',
+      );
+      // Shredder is a required role in every review, including the
+      // early-exit path (confirmCleanReview in phases/sparring.ts) — a
+      // review whose SPARRING phase never actually produced a genuine
+      // shredder-attributed result (call failed, or simply never invoked)
+      // has not met that requirement, whatever Leo concludes.
+      const shredderRequiredRoleMissing = !sparringEvents.some(
+        (e) => e.actor === 'shredder' && e.eventType !== 'validation_failed',
+      );
+      // Shredder can also genuinely object during early exit with no
+      // finding to attach the objection to (nothing was material enough to
+      // become one) — that objection must not be silently overridden by a
+      // "clean" claim either.
+      const shredderRaisedUnresolvedObjection = sparringEvents.some(
+        (e) => e.actor === 'shredder' && e.eventType === 'observation_recorded',
+      );
+      const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
+      const requiredCoverageMissing = requiredLaneFailed || shredderRequiredRoleMissing || shredderRaisedUnresolvedObjection;
+      if (requiredCoverageMissing && !anyBlockingPublished && verdict.overallOutcome !== 'incomplete') {
+        const reason = requiredLaneFailed
+          ? 'a required independent-review lane failed'
+          : shredderRaisedUnresolvedObjection
+            ? 'Shredder objected to treating this as a clean review'
+            : 'Shredder — a required role in every review — never completed';
+        verdict = {
+          ...verdict,
+          overallOutcome: 'incomplete',
+          rationale: `${verdict.rationale} Required coverage was incomplete — ${reason} — so this cannot be published as a clean verdict.`,
+        };
+      }
+
       await store.saveVerdict(verdict);
       await recordEvent(store, { reviewId: current.id, phase: 'LEO_REVIEW', actor: 'leo', eventType: 'verdict_recorded' });
 
@@ -322,7 +401,7 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
   if (current.currentPhase === 'PUBLICATION') {
     const verdict = await store.getVerdict(current.id);
     if (!verdict) return fail(store, current, 'failed_final', 'reached PUBLICATION with no recorded verdict');
-    const result = await publish(store, deps.githubClient, current, verdict, input.installationId, input.repo, deps.publicationPolicy ?? DEFAULT_PUBLICATION_POLICY);
+    const result = await publish(store, deps.githubClient, current, verdict, input.installationId, input.repo);
     if (result.outcome === 'superseded_stale_sha') {
       return (await store.getReviewRun(current.id)) as ReviewRun;
     }
