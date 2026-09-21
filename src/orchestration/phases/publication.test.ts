@@ -90,6 +90,21 @@ describe('determineOutcome', () => {
     });
     expect(determineOutcome(v)).toBe('COMMENT');
   });
+
+  it('never requests changes for an incomplete verdict, even one carrying a blocking published finding', () => {
+    // Nothing in the schema stops Leo from combining overallOutcome:
+    // "incomplete" with a published finding marked blocking — an incomplete
+    // review has no merge-readiness authority to assert, so this must not
+    // surface as REQUEST_CHANGES (which renderReviewBody would then
+    // contradict by hiding the finding and saying no verdict was issued).
+    const v = verdict({
+      overallOutcome: 'incomplete',
+      findings: [
+        { findingId: 'f1', outcome: 'publish', finalSeverity: 'high', publicReason: 'x', blocking: true, blockingReason: 'y' },
+      ],
+    });
+    expect(determineOutcome(v)).toBe('COMMENT');
+  });
 });
 
 describe('renderReviewBody — public output excludes internal chatter', () => {

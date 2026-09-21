@@ -76,14 +76,22 @@ export async function runLeoReview(
       continue;
     }
     const findings = Array.isArray(parsed['findings'])
-      ? (parsed['findings'] as Record<string, unknown>[]).map((f) => ({
-          ...f,
-          // Leo's own prompt is not the enforcement layer — a model that
-          // omits blocking or sets it on a non-publish outcome must not
-          // silently pass validation as "no blockers found."
-          blocking: f['outcome'] === 'publish' ? f['blocking'] === true : false,
-          blocking_reason: f['outcome'] === 'publish' ? (f['blocking_reason'] ?? null) : null,
-        }))
+      ? (parsed['findings'] as Record<string, unknown>[]).map((f) =>
+          f['outcome'] === 'publish'
+            ? // Pass `blocking` through unchanged for a publish decision — do
+              // NOT coerce a missing or malformed value to `false` here. Leo's
+              // own prompt is not the enforcement layer: schema.ts's
+              // `required: ["blocking"]` + `type: boolean` must be the thing
+              // that rejects a model that omitted or malformed the merge-
+              // readiness decision, forcing a retry instead of silently
+              // becoming "not blocking."
+              f
+            : // blocking is only meaningful for a published finding; forcing
+              // it here for every other outcome is not a coercion risk since
+              // the schema treats this as normalized data, not the model's
+              // own claim.
+              { ...f, blocking: false, blocking_reason: null },
+        )
       : [];
     const candidate = {
       review_id: reviewId,

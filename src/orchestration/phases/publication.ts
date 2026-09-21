@@ -35,8 +35,16 @@ export interface PublicationGitHubClient {
  * `blocking` is Leo's own explicit per-finding decision (set in
  * LEO_REVIEW), never re-derived here from severity: severity is impact,
  * blocking is merge-readiness, and the two are independent dimensions.
+ *
+ * An `incomplete` overall outcome always maps to a themed no-verdict
+ * COMMENT (review-policy.md section 3), checked before blocking findings
+ * are even considered. Nothing in the schema stops a verdict from claiming
+ * `incomplete` while still carrying a finding marked blocking — an
+ * incomplete review has no merge-readiness authority to assert either way,
+ * so it must never surface as REQUEST_CHANGES.
  */
 export function determineOutcome(verdict: Verdict): GitHubReviewOutcome {
+  if (verdict.overallOutcome === 'incomplete') return 'COMMENT';
   const published = verdict.findings.filter((f) => f.outcome === 'publish');
   const blocking = published.some((f) => f.blocking);
   return blocking ? 'REQUEST_CHANGES' : 'COMMENT';

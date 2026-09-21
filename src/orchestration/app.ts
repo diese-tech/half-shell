@@ -20,6 +20,7 @@ import { renderChange } from '../council/prompt.js';
 import { ingest, type EngineDependencies, type WebhookIngestInput } from './engine.js';
 import type { PublicationGitHubClient } from './phases/publication.js';
 import { poolFromSingleChain } from './provider.js';
+import { untrustedInput } from './prompt.js';
 import { OrchestrationStore } from './store.js';
 import type { PersonaCodename } from './types.js';
 
@@ -139,7 +140,13 @@ export class CouncilApp {
       repo: job.repo,
       githubDeliveryId: job.deliveryId,
       trigger: 'webhook',
-      changeContext: change.text,
+      // Attacker-controlled PR content (title, description, diff, linked
+      // issues, repository guidance) is delimited and paired with the
+      // explicit non-authority rule personaSystemPrompt() carries, exactly
+      // as v1's pipeline does for the same content (src/council/briefing.ts,
+      // src/council/lanes.ts) — never handed to a persona as if it were an
+      // instruction.
+      changeContext: untrustedInput('github_pull_request', change.text),
     };
 
     const result = await ingest(deps, input);

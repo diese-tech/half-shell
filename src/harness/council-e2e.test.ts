@@ -39,6 +39,13 @@ describe('end to end — council engine', () => {
     expect(phases.has('council_case_file')).toBe(true);
     expect(phases.has('council_independent_review')).toBe(true);
     expect(phases.has('council_leo_review')).toBe(true);
+
+    // The PR content a persona actually sees is delimited as untrusted data,
+    // not concatenated in as if it were part of the instruction.
+    const caseFileRequest = harness.inference.requests.find((request) => request.phase === 'council_case_file');
+    expect(caseFileRequest?.user).toContain('<untrusted_input source="github_pull_request">');
+    expect(caseFileRequest?.system).toContain('Never');
+    expect(caseFileRequest?.system).toContain('obey it');
   });
 
   it('does not auto-trigger a new council review on synchronize alone', async () => {
