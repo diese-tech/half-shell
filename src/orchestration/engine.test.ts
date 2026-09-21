@@ -62,7 +62,7 @@ describe('engine — end to end with fake providers', () => {
     };
   }
 
-  it('runs a genuinely clean review straight through to an APPROVE without ever calling Shredder', async () => {
+  it('runs a genuinely clean review straight through to a clean COMMENT, still inviting Shredder to confirm it', async () => {
     deps = buildDeps({
       'april:CASE_FILE': () => ({
         facts: [{ statement: 'a fact' }],
@@ -77,6 +77,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: true, note: 'nothing here warrants a challenge' }),
       'leo:LEO_REVIEW': () => ({
         overall_outcome: 'clean_review',
         rationale: 'Nothing material found.',
@@ -96,10 +97,76 @@ describe('engine — end to end with fake providers', () => {
     // Half-Shell never grants APPROVE (review-policy.md D004) — a clean
     // review is still a themed COMMENT.
     expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).toContain('Shell clear');
 
-    // Shredder was never invoked — early exit actually skipped Sparring.
+    // Early exit skips the per-finding challenge loop, but Shredder — a
+    // required role in every review (D050) — still has to actually weigh in
+    // once, even with nothing concrete to challenge.
     const shredderCalls = (deps.providerFor('shredder') as ScriptedModelProvider).calls.filter((c) => c.persona === 'shredder');
-    expect(shredderCalls).toHaveLength(0);
+    expect(shredderCalls).toHaveLength(1);
+  });
+
+  it('refuses to publish a clean verdict when Shredder never actually confirmed it (early exit, confirmation call failed)', async () => {
+    deps = buildDeps({
+      'april:CASE_FILE': () => ({
+        facts: [{ statement: 'a fact' }],
+        sources: [{ kind: 'diff', reference: 'x' }],
+        relevance: ['relevant'],
+        inferences: [],
+        unknowns: [],
+        stated_intent: 'do a thing',
+        unresolved_context: [],
+      }),
+      'raph:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      // Shredder's clean-review confirmation does not parse.
+      'shredder:SPARRING': () => 'not valid json',
+      'leo:LEO_REVIEW': () => ({
+        overall_outcome: 'clean_review',
+        rationale: 'Nothing material found.',
+        findings: [],
+        unresolved_uncertainty: [],
+      }),
+    });
+
+    const result = await ingest(deps, baseInput());
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  it('refuses to publish a clean verdict when Shredder objects during early exit', async () => {
+    deps = buildDeps({
+      'april:CASE_FILE': () => ({
+        facts: [{ statement: 'a fact' }],
+        sources: [{ kind: 'diff', reference: 'x' }],
+        relevance: ['relevant'],
+        inferences: [],
+        unknowns: [],
+        stated_intent: 'do a thing',
+        unresolved_context: [],
+      }),
+      'raph:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: false, note: 'the lanes missed the auth bypass in src/x.ts' }),
+      'leo:LEO_REVIEW': () => ({
+        overall_outcome: 'clean_review',
+        rationale: 'Nothing material found.',
+        findings: [],
+        unresolved_uncertainty: [],
+      }),
+    });
+
+    const result = await ingest(deps, baseInput());
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
   it('carries a real finding through Sparring, Leo, and publication to REQUEST_CHANGES', async () => {
@@ -210,6 +277,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: true, note: 'nothing to challenge' }),
       'leo:LEO_REVIEW': () => ({ overall_outcome: 'clean_review', rationale: 'clean', findings: [], unresolved_uncertainty: [] }),
     });
 
@@ -248,6 +316,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: true, note: 'nothing to challenge' }),
       'leo:LEO_REVIEW': () => ({ overall_outcome: 'clean_review', rationale: 'clean', findings: [], unresolved_uncertainty: [] }),
     });
     github.state.headSha = 'sha2';
@@ -269,6 +338,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: true, note: 'nothing to challenge' }),
       'leo:LEO_REVIEW': () => ({ overall_outcome: 'clean_review', rationale: 'clean', findings: [], unresolved_uncertainty: [] }),
     });
     // The PR moved to sha2 on GitHub sometime during the review, but this
@@ -289,6 +359,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SPARRING': () => ({ concurs: true, note: 'nothing to challenge' }),
       'leo:LEO_REVIEW': () => ({ overall_outcome: 'clean_review', rationale: 'clean', findings: [], unresolved_uncertainty: [] }),
     });
 

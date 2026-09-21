@@ -167,6 +167,13 @@ export function defaultCouncilScript(): Script {
     }),
     council_independent_review: JSON.stringify({ findings: [] }),
     council_mentorship: JSON.stringify({ lessons: [], guardrail_recommendations: [] }),
+    // Early exit skips the per-finding challenge loop, but Shredder's own
+    // participation is still required (review-policy.md D050) — this is
+    // his minimal confirmation pass over the case file.
+    council_sparring: JSON.stringify({
+      concurs: true,
+      note: 'Nothing in the case file suggests the lanes missed anything material.',
+    }),
     council_leo_review: JSON.stringify({
       overall_outcome: 'clean_review',
       rationale: 'All four independent-review lanes reported nothing material.',

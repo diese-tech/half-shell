@@ -17,7 +17,7 @@ import { runIndependentReview } from './phases/independentReview.js';
 import { runLeoReview } from './phases/leoReview.js';
 import { applyLessons, runMentorship } from './phases/mentorship.js';
 import { publish, type PublicationGitHubClient } from './phases/publication.js';
-import { spar } from './phases/sparring.js';
+import { confirmCleanReview, spar } from './phases/sparring.js';
 import type { ModelProvider } from './provider.js';
 import { DEFAULT_CHALLENGE_BUDGET, SparringChallengeTracker, type ChallengeBudgetConfig } from './sparring.js';
 import type { OrchestrationStore } from './store.js';
@@ -274,6 +274,48 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
           }
         }
         await store.saveFindings(settled);
+      } else {
+        // Early exit skips the per-finding challenge loop (there is nothing
+        // to challenge), but Shredder's participation is still required by
+        // policy — review-policy.md section 17, D050. Without this, a clean
+        // review could publish having never actually invited its adversary,
+        // which is exactly the manufactured confidence the fail-safe below
+        // exists to prevent.
+        const packet = await store.getEvidencePacket(current.id);
+        const confirmation = await confirmCleanReview(
+          deps.providerFor('shredder'),
+          persona(deps, 'shredder'),
+          JSON.stringify(packet ?? {}),
+        );
+        if (!confirmation.ok) {
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'validation_failed',
+            content: confirmation.note,
+          });
+        } else if (!confirmation.concurs) {
+          // Shredder objects, but there is no CouncilFinding to attach this
+          // to — the independent lanes never produced one. Recorded so the
+          // fail-safe below can see it and refuse a clean verdict; this is
+          // deliberately not synthesized into a fabricated finding.
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'observation_recorded',
+            content: confirmation.note || 'objects to treating this review as clean',
+          });
+        } else {
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'SPARRING',
+            actor: 'shredder',
+            eventType: 'challenge_accepted',
+            content: confirmation.note || 'concurs: nothing here warrants a challenge',
+          });
+        }
       }
     }
     await completePhase(store, current);
@@ -301,20 +343,40 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
       }
       verdict = result.verdict;
 
-      // Fail-safe invariant (review-policy.md section 18): never manufacture
-      // confidence. If a required INDEPENDENT_REVIEW lane failed and no
-      // blocking finding survived anyway, this cannot be published as a
-      // clean verdict — enforced here in code, not left to Leo's prompt,
-      // regardless of what the model itself concluded.
+      // Fail-safe invariant (review-policy.md section 18, D050): never
+      // manufacture confidence. Enforced here in code, not left to Leo's
+      // prompt, regardless of what the model itself concluded. Two ways
+      // required coverage can be missing:
       const requiredLaneFailed = (await store.listEvents(current.id)).some(
         (e) => e.phase === 'INDEPENDENT_REVIEW' && e.eventType === 'validation_failed',
       );
+      // Shredder is a required role in every review, including the
+      // early-exit path (confirmCleanReview in phases/sparring.ts) — a
+      // review whose SPARRING phase never actually produced a genuine
+      // shredder-attributed result (call failed, or simply never invoked)
+      // has not met that requirement, whatever Leo concludes.
+      const shredderRequiredRoleMissing = !sparringEvents.some(
+        (e) => e.actor === 'shredder' && e.eventType !== 'validation_failed',
+      );
+      // Shredder can also genuinely object during early exit with no
+      // finding to attach the objection to (nothing was material enough to
+      // become one) — that objection must not be silently overridden by a
+      // "clean" claim either.
+      const shredderRaisedUnresolvedObjection = sparringEvents.some(
+        (e) => e.actor === 'shredder' && e.eventType === 'observation_recorded',
+      );
       const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
-      if (requiredLaneFailed && !anyBlockingPublished && verdict.overallOutcome !== 'incomplete') {
+      const requiredCoverageMissing = requiredLaneFailed || shredderRequiredRoleMissing || shredderRaisedUnresolvedObjection;
+      if (requiredCoverageMissing && !anyBlockingPublished && verdict.overallOutcome !== 'incomplete') {
+        const reason = requiredLaneFailed
+          ? 'a required independent-review lane failed'
+          : shredderRaisedUnresolvedObjection
+            ? 'Shredder objected to treating this as a clean review'
+            : 'Shredder — a required role in every review — never completed';
         verdict = {
           ...verdict,
           overallOutcome: 'incomplete',
-          rationale: `${verdict.rationale} Required coverage was incomplete — a required independent-review lane failed — so this cannot be published as a clean verdict.`,
+          rationale: `${verdict.rationale} Required coverage was incomplete — ${reason} — so this cannot be published as a clean verdict.`,
         };
       }
 

@@ -227,3 +227,63 @@ export async function spar(
 
   return { finding: current, challengesRaised: tracker.challengesRaised(finding.id), transcriptEvents: events };
 }
+
+const CLEAN_REVIEW_INSTRUCTION = [
+  'Phase: SPARRING. The independent review lanes found nothing material to',
+  'challenge — there is no candidate finding for you to spar over. Your job',
+  'here is narrower but still real, and it is not optional: review the case',
+  'file yourself and either concur that there is genuinely nothing worth',
+  'challenging, or say what you think the lanes missed. Do not concur just',
+  'because nothing was handed to you — that would defeat the point of your',
+  'role.',
+  '',
+  'Respond with a single JSON object:',
+  '{',
+  '  "concurs": true | false,',
+  '  "note": "one or two sentences — why you concur, or what you think was missed"',
+  '}',
+].join('\n');
+
+export interface CleanReviewConfirmation {
+  /** False only when the response genuinely could not be parsed — never a stand-in for a real decision. */
+  ok: boolean;
+  concurs: boolean;
+  note: string;
+}
+
+/**
+ * The required Shredder role does not disappear just because early exit
+ * (src/orchestration/earlyExit.ts) skips the per-finding challenge loop —
+ * review-policy.md requires his participation in every review. This is the
+ * minimal adversarial pass for that path: no finding exists yet to
+ * anonymize and challenge, so Shredder instead reviews the case file
+ * directly and is asked to actually object if he sees something the
+ * independent lanes missed, rather than rubber-stamping silence.
+ */
+export async function confirmCleanReview(
+  provider: ModelProvider,
+  persona: PersonaConfig,
+  caseFileSummary: string,
+): Promise<CleanReviewConfirmation> {
+  try {
+    const response = await provider.generate({
+      persona: 'shredder',
+      phase: 'SPARRING',
+      systemPrompt: personaSystemPrompt(persona, CLEAN_REVIEW_INSTRUCTION),
+      userPrompt: caseFileSummary,
+      json: true,
+      temperature: 0.2,
+    });
+    const parsed = parseJsonObject<Record<string, unknown>>(response.text);
+    if (!parsed || typeof parsed['concurs'] !== 'boolean') {
+      return { ok: false, concurs: false, note: 'response was not valid JSON' };
+    }
+    return {
+      ok: true,
+      concurs: parsed['concurs'],
+      note: typeof parsed['note'] === 'string' ? parsed['note'] : '',
+    };
+  } catch (error) {
+    return { ok: false, concurs: false, note: error instanceof Error ? error.message : String(error) };
+  }
+}
