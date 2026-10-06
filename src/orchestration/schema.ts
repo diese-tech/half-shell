@@ -10,6 +10,8 @@ import { join } from 'node:path';
 // reasoning as src/protocol/schema.ts.
 import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js';
 
+import { SCHEMA_FORMATS } from '../protocol/schema.js';
+
 const SCHEMA_FILES = [
   'review-run.schema.json',
   'finding.schema.json',
@@ -34,7 +36,7 @@ export function loadSchemaFile(name: string): unknown {
 let validators: Map<SchemaName, ValidateFunction> | undefined;
 
 function compile(): Map<SchemaName, ValidateFunction> {
-  const ajv = new Ajv2020({ allErrors: true, strict: false, useDefaults: true });
+  const ajv = new Ajv2020({ allErrors: true, strict: false, useDefaults: true, formats: SCHEMA_FORMATS });
   for (const file of SCHEMA_FILES) {
     ajv.addSchema(loadSchemaFile(file) as object, file);
   }

@@ -31,6 +31,14 @@ describe('orchestration schemas', () => {
     expect(errors.some((e) => e.includes('head_sha'))).toBe(true);
   });
 
+  it('actually checks date-time fields instead of ignoring the format', () => {
+    const broken = fixture('review-run.json') as Record<string, unknown>;
+    broken['created_at'] = 'yesterday-ish';
+    const { valid, errors } = validateAgainst('review-run.schema.json', broken);
+    expect(valid).toBe(false);
+    expect(errors.some((e) => e.includes('created_at'))).toBe(true);
+  });
+
   it('rejects a finding whose source_persona is not a real persona', () => {
     const broken = { ...(fixture('finding.json') as Record<string, unknown>), source_persona: 'bebop' };
     const { valid } = validateAgainst('finding.schema.json', broken);
