@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canPublish, isDuplicateDelivery, isSameGenerationAlreadyHandled, nextGeneration, runsToSupersede } from './identity.js';
+import { canPublish, isDuplicateDelivery, nextGeneration, runsToSupersede, sameGenerationRun } from './identity.js';
 import type { ReviewRun } from './types.js';
 
 function run(overrides: Partial<ReviewRun> = {}): ReviewRun {
@@ -39,13 +39,23 @@ describe('isDuplicateDelivery', () => {
   });
 });
 
-describe('isSameGenerationAlreadyHandled', () => {
-  it('is true when a run already exists for this exact head SHA', () => {
-    expect(isSameGenerationAlreadyHandled([run({ headSha: 'sha1' })], 'sha1')).toBe(true);
+describe('sameGenerationRun', () => {
+  it('finds any run at this exact head SHA for an automatic delivery', () => {
+    const done = run({ headSha: 'sha1', status: 'archived' });
+    expect(sameGenerationRun([done], 'sha1', 'webhook')).toBe(done);
   });
 
-  it('is false for a new head SHA', () => {
-    expect(isSameGenerationAlreadyHandled([run({ headSha: 'sha1' })], 'sha2')).toBe(false);
+  it('finds nothing for a new head SHA', () => {
+    expect(sameGenerationRun([run({ headSha: 'sha1' })], 'sha2', 'webhook')).toBeUndefined();
+  });
+
+  it('lets an explicit @half-shell rerun a finished or failed same-SHA review (D012)', () => {
+    expect(sameGenerationRun([run({ status: 'archived' }), run({ id: 'rev_2', status: 'failed_retryable' })], 'sha1', 'manual')).toBeUndefined();
+  });
+
+  it('still dedupes an explicit @half-shell against an active same-SHA review', () => {
+    const active = run({ status: 'running' });
+    expect(sameGenerationRun([active], 'sha1', 'manual')).toBe(active);
   });
 });
 

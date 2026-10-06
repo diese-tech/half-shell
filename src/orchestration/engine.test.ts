@@ -169,8 +169,8 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
-  it('carries a real finding through Sparring, Leo, and publication to REQUEST_CHANGES', async () => {
-    deps = buildDeps({
+  function realFindingScript(leoOverallOutcome: string): Partial<Record<string, ScriptedResponder>> {
+    return {
       'april:CASE_FILE': () => ({
         facts: [{ statement: 'load() gained a required tenantId parameter' }],
         sources: [{ kind: 'diff', reference: 'src/loader.ts' }],
@@ -198,7 +198,7 @@ describe('engine — end to end with fake providers', () => {
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'shredder:SPARRING': () => ({ action: 'accept' }),
       'leo:LEO_REVIEW': (request) => ({
-        overall_outcome: 'blocking_findings_published',
+        overall_outcome: leoOverallOutcome,
         rationale: 'The stale call site fails on every import.',
         findings: [
           {
@@ -212,7 +212,11 @@ describe('engine — end to end with fake providers', () => {
         ],
         unresolved_uncertainty: [],
       }),
-    });
+    };
+  }
+
+  it('carries a real finding through Sparring, Leo, and publication to REQUEST_CHANGES', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
 
     const result = await ingest(deps, baseInput());
     const run = await store.getReviewRun(result.reviewId);
@@ -224,6 +228,15 @@ describe('engine — end to end with fake providers', () => {
 
     const findings = await store.listFindings(result.reviewId);
     expect(findings.some((f) => f.status === 'published')).toBe(true);
+  });
+
+  it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {
+    deps = buildDeps(realFindingScript('non_blocking_findings_published'));
+
+    const result = await ingest(deps, baseInput());
+
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('blocking_findings_published');
+    expect(github.state.reviews[0]?.event).toBe('REQUEST_CHANGES');
   });
 
   it('does not treat a failed independent-review lane as a clean pass — it never early-exits with a missing lane', async () => {
@@ -305,6 +318,20 @@ describe('engine — end to end with fake providers', () => {
     expect(second.outcome).toBe('duplicate_delivery');
     expect(second.reviewId).toBe(first.reviewId);
     expect(github.state.reviews).toHaveLength(1);
+  });
+
+  it('starts a fresh review for an explicit @half-shell after a finished same-SHA review (D012)', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
+
+    const first = await ingest(deps, baseInput({ githubDeliveryId: 'delivery-auto' }));
+    const again = await ingest(deps, baseInput({ githubDeliveryId: 'delivery-auto-retry' }));
+    const mention = await ingest(deps, baseInput({ githubDeliveryId: 'delivery-mention', trigger: 'manual' }));
+
+    expect(again).toEqual({ reviewId: first.reviewId, outcome: 'already_handled_generation' });
+    expect(mention.outcome).toBe('started');
+    expect(mention.reviewId).not.toBe(first.reviewId);
+    expect((await store.getReviewRun(mention.reviewId))?.generation).toBe(2);
+    expect(github.state.reviews).toHaveLength(2);
   });
 
   it('supersedes an older still-running review when a newer head SHA arrives for the same PR', async () => {

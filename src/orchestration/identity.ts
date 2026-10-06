@@ -14,11 +14,13 @@ export function isDuplicateDelivery(existingRuns: ReviewRun[], deliveryId: strin
 }
 
 /**
- * A delivery is for a generation Half-Shell has already run to completion
- * (or is currently running) at the same head SHA — nothing new to do.
+ * The run that already covers this head SHA, so there is nothing new to
+ * start. An automatic delivery is covered by any run at that SHA. An explicit
+ * `@half-shell` (trigger "manual") is covered only by an active one: a
+ * finished or failed same-SHA run gets a fresh review (review-policy.md D012).
  */
-export function isSameGenerationAlreadyHandled(existingRuns: ReviewRun[], headSha: string): boolean {
-  return existingRuns.some((run) => run.headSha === headSha);
+export function sameGenerationRun(existingRuns: ReviewRun[], headSha: string, trigger: ReviewRun['trigger']): ReviewRun | undefined {
+  return existingRuns.find((run) => run.headSha === headSha && (trigger !== 'manual' || run.status === ACTIVE_STATUS));
 }
 
 /** Every prior run for this PR that is still active and at an older head SHA. */

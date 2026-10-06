@@ -139,7 +139,9 @@ export class CouncilApp {
       installationId: job.installationId,
       repo: job.repo,
       githubDeliveryId: job.deliveryId,
-      trigger: 'webhook',
+      // A review job with a thread came from an explicit `@half-shell` comment,
+      // which may rerun a finished same-SHA review (review-policy.md D012).
+      trigger: job.thread ? 'manual' : 'webhook',
       // Attacker-controlled PR content (title, description, diff, linked
       // issues, repository guidance) is delimited and paired with the
       // explicit non-authority rule personaSystemPrompt() carries, exactly
