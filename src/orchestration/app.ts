@@ -151,11 +151,10 @@ export class CouncilApp {
 
     const result = await ingest(deps, input);
     await this.recordTokenUsage(result.reviewId, router);
-    log.info('council review ingested', {
-      pr: job.pullNumber,
-      reviewId: result.reviewId,
-      outcome: result.outcome,
-    });
+    const run = await this.store.getReviewRun(result.reviewId);
+    const fields = { pr: job.pullNumber, reviewId: result.reviewId, outcome: result.outcome, status: run?.status };
+    if (run?.status.startsWith('failed')) log.error('council review failed', { ...fields, error: run.error });
+    else log.info('council review ingested', fields);
   }
 
   /** The router is per-job, so its stats are exactly this job's spend; added, since a resumed run is billed again. */

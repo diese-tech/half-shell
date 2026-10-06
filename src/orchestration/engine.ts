@@ -139,8 +139,21 @@ export async function ingest(deps: EngineDependencies, input: WebhookIngestInput
  * Drives a run forward from its current phase. Safe to call repeatedly —
  * each phase checks whether its own output already exists before doing
  * any model work again.
+ *
+ * A phase that throws (e.g. every provider timed out) marks the run
+ * failed_retryable instead of leaving it "running" forever with no worker.
  */
 export async function advance(deps: EngineDependencies, run: ReviewRun, input: WebhookIngestInput): Promise<ReviewRun> {
+  try {
+    return await advancePhases(deps, run, input);
+  } catch (error) {
+    const latest = (await deps.store.getReviewRun(run.id)) ?? run;
+    if (latest.status !== 'running') return latest;
+    return fail(deps.store, latest, 'failed_retryable', error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: WebhookIngestInput): Promise<ReviewRun> {
   const { store } = deps;
   let current = run;
   if (current.status !== 'running') return current;

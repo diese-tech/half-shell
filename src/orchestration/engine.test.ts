@@ -270,6 +270,24 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.body).toContain('could not complete this round');
   });
 
+  it('marks the run failed_retryable, not forever running, when a phase provider throws', async () => {
+    deps = buildDeps({
+      'april:CASE_FILE': () => {
+        throw new Error('all providers failed: ollama request failed: timeout');
+      },
+    });
+
+    const { reviewId } = await ingest(deps, baseInput());
+
+    const run = await store.getReviewRun(reviewId);
+    expect(run?.status).toBe('failed_retryable');
+    expect(run?.currentPhase).toBe('CASE_FILE');
+    expect(run?.error).toContain('all providers failed');
+    const events = await store.listEvents(reviewId);
+    expect(events.at(-1)?.eventType).toBe('run_failed');
+    expect(github.state.reviews).toHaveLength(0);
+  });
+
   it('deduplicates a repeated webhook delivery for the same review generation', async () => {
     deps = buildDeps({
       'april:CASE_FILE': () => ({ facts: [], sources: [], relevance: [], inferences: [], unknowns: [], stated_intent: '', unresolved_context: [] }),
