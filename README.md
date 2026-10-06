@@ -192,6 +192,8 @@ npm run dojo  # builds, then serves http://127.0.0.1:3001/dojo
 
 Dojo reads the Council database the service writes (`HALF_SHELL_COUNCIL_DATABASE_PATH`, default `.half-shell/council.db`) in SQLite read-only mode, binds to loopback only, and cannot trigger reviews, edit findings, or touch GitHub. See [`docs/deployment.md`](./docs/deployment.md#dojo-v0-local-council-viewer).
 
+To run the whole local stack in one command: `npm run local` starts Ollama if needed and loads `qwen2.5-coder:14b`, then starts Dojo and the Council service. Add `-- --harness` to run a sample review without GitHub credentials.
+
 Deploying: [`docs/deployment.md`](./docs/deployment.md) and the [`Dockerfile`](./Dockerfile).
 
 Configuration lives in the environment; see [`.env.example`](./.env.example) for the GitHub App credentials, the ordered inference chain, and the review budget. Implementation details are in [`docs/architecture/pipeline.md`](./docs/architecture/pipeline.md).

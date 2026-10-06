@@ -139,7 +139,9 @@ export class CouncilApp {
       installationId: job.installationId,
       repo: job.repo,
       githubDeliveryId: job.deliveryId,
-      trigger: 'webhook',
+      // A review job with a thread came from an explicit `@half-shell` comment,
+      // which may rerun a finished same-SHA review (review-policy.md D012).
+      trigger: job.thread ? 'manual' : 'webhook',
       // Attacker-controlled PR content (title, description, diff, linked
       // issues, repository guidance) is delimited and paired with the
       // explicit non-authority rule personaSystemPrompt() carries, exactly
@@ -150,10 +152,25 @@ export class CouncilApp {
     };
 
     const result = await ingest(deps, input);
-    log.info('council review ingested', {
-      pr: job.pullNumber,
-      reviewId: result.reviewId,
-      outcome: result.outcome,
+    await this.recordTokenUsage(result.reviewId, router);
+    const run = await this.store.getReviewRun(result.reviewId);
+    const fields = { pr: job.pullNumber, reviewId: result.reviewId, outcome: result.outcome, status: run?.status };
+    if (run?.status.startsWith('failed')) log.error('council review failed', { ...fields, error: run.error });
+    else log.info('council review ingested', fields);
+  }
+
+  /** The router is per-job, so its stats are exactly this job's spend; added, since a resumed run is billed again. */
+  private async recordTokenUsage(reviewId: string, router: ProviderRouter): Promise<void> {
+    const { promptTokens, completionTokens } = router.stats;
+    if (promptTokens === 0 && completionTokens === 0) return;
+    const run = await this.store.getReviewRun(reviewId);
+    if (!run) return;
+    await this.store.saveReviewRun({
+      ...run,
+      tokenUsage: {
+        promptTokens: run.tokenUsage.promptTokens + promptTokens,
+        completionTokens: run.tokenUsage.completionTokens + completionTokens,
+      },
     });
   }
 }

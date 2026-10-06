@@ -15,10 +15,21 @@ const SCHEMA_FILES = [
 
 type SchemaName = (typeof SCHEMA_FILES)[number];
 
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/i;
+
+/**
+ * The only `format` the schemas use. Ajv ignores unknown formats (with a
+ * warning per use), so without this the schemas' date-time fields were
+ * never actually checked; a regex plus Date.parse beats a dependency here.
+ */
+export const SCHEMA_FORMATS = {
+  'date-time': (value: string) => RFC3339.test(value) && !Number.isNaN(Date.parse(value)),
+};
+
 let validators: Map<SchemaName, ValidateFunction> | undefined;
 
 function compile(): Map<SchemaName, ValidateFunction> {
-  const ajv = new Ajv2020({ allErrors: true, strict: false, useDefaults: true });
+  const ajv = new Ajv2020({ allErrors: true, strict: false, useDefaults: true, formats: SCHEMA_FORMATS });
   // Register every schema first so `$ref: "finding.schema.json"` resolves.
   for (const file of SCHEMA_FILES) {
     ajv.addSchema(loadSchemaFile(file) as object, file);

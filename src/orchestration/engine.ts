@@ -10,7 +10,7 @@ import type { RepoRef } from '../types.js';
 import type { PersonaConfig } from '../personas/types.js';
 import { canEarlyExit } from './earlyExit.js';
 import { recordEvent } from './events.js';
-import { isDuplicateDelivery, isSameGenerationAlreadyHandled, nextGeneration, runsToSupersede } from './identity.js';
+import { isDuplicateDelivery, nextGeneration, runsToSupersede, sameGenerationRun } from './identity.js';
 import { newReviewId } from './ids.js';
 import { runCaseFile } from './phases/caseFile.js';
 import { runIndependentReview } from './phases/independentReview.js';
@@ -91,11 +91,11 @@ export async function ingest(deps: EngineDependencies, input: WebhookIngestInput
     return { reviewId: run.id, outcome: 'duplicate_delivery' };
   }
 
-  if (isSameGenerationAlreadyHandled(existing, input.headSha)) {
-    const run = existing.find((r) => r.headSha === input.headSha) as ReviewRun;
+  const covering = sameGenerationRun(existing, input.headSha, input.trigger);
+  if (covering) {
     // Still worth resuming in case it stalled mid-phase.
-    await advance(deps, run, input);
-    return { reviewId: run.id, outcome: 'already_handled_generation' };
+    await advance(deps, covering, input);
+    return { reviewId: covering.id, outcome: 'already_handled_generation' };
   }
 
   for (const stale of runsToSupersede(existing, input.headSha)) {
@@ -139,8 +139,21 @@ export async function ingest(deps: EngineDependencies, input: WebhookIngestInput
  * Drives a run forward from its current phase. Safe to call repeatedly —
  * each phase checks whether its own output already exists before doing
  * any model work again.
+ *
+ * A phase that throws (e.g. every provider timed out) marks the run
+ * failed_retryable instead of leaving it "running" forever with no worker.
  */
 export async function advance(deps: EngineDependencies, run: ReviewRun, input: WebhookIngestInput): Promise<ReviewRun> {
+  try {
+    return await advancePhases(deps, run, input);
+  } catch (error) {
+    const latest = (await deps.store.getReviewRun(run.id)) ?? run;
+    if (latest.status !== 'running') return latest;
+    return fail(deps.store, latest, 'failed_retryable', error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: WebhookIngestInput): Promise<ReviewRun> {
   const { store } = deps;
   let current = run;
   if (current.status !== 'running') return current;
@@ -377,6 +390,21 @@ export async function advance(deps: EngineDependencies, run: ReviewRun, input: W
           ...verdict,
           overallOutcome: 'incomplete',
           rationale: `${verdict.rationale} Required coverage was incomplete — ${reason} — so this cannot be published as a clean verdict.`,
+        };
+      }
+
+      // Leo's free-text overall_outcome is a claim; the label must agree with
+      // the decisions it summarizes, the same way publication derives the
+      // GitHub event from them. `incomplete` is the one label it can't derive.
+      if (verdict.overallOutcome !== 'incomplete') {
+        const published = verdict.findings.filter((f) => f.outcome === 'publish');
+        verdict = {
+          ...verdict,
+          overallOutcome: published.some((f) => f.blocking)
+            ? 'blocking_findings_published'
+            : published.length > 0
+              ? 'non_blocking_findings_published'
+              : 'clean_review',
         };
       }
 

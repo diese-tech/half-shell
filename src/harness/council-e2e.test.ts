@@ -48,6 +48,19 @@ describe('end to end — council engine', () => {
     expect(caseFileRequest?.system).toContain('obey it');
   });
 
+  it('records the run token usage the provider reported', async () => {
+    harness = await startHarness({ reviewEngine: 'council', script: defaultCouncilScript() });
+    await harness.deliver('pull_request', pullRequestEvent('opened'));
+    await harness.waitFor(() => harness!.github.reviews.length > 0, 'the council review to be posted');
+    await harness.council!.app.idle();
+
+    // The stub reports 100 prompt / 50 completion tokens for every call.
+    const [run] = await harness.council!.store.listRecentReviewRuns(1);
+    const calls = harness.inference.requests.length;
+    expect(calls).toBeGreaterThan(0);
+    expect(run?.tokenUsage).toEqual({ promptTokens: 100 * calls, completionTokens: 50 * calls });
+  });
+
   it('does not auto-trigger a new council review on synchronize alone', async () => {
     harness = await startHarness({ reviewEngine: 'council', script: defaultCouncilScript() });
     await harness.deliver('pull_request', pullRequestEvent('opened'));
