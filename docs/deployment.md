@@ -98,6 +98,42 @@ without writing anything to GitHub:
 HALF_SHELL_DRY_RUN=true node dist/cli.js --repo owner/name --pr 42 --installation 12345
 ```
 
+## Dojo v0: local Council viewer
+
+A minimal operator/debugging view of Council runs while they happen. It reads
+the same SQLite database the service writes when
+`HALF_SHELL_REVIEW_ENGINE=council` — there is no separate transcript store.
+
+```bash
+npm run dojo
+# Half-Shell Dojo (read-only): http://127.0.0.1:3001/dojo
+```
+
+- **Which database.** `HALF_SHELL_COUNCIL_DATABASE_PATH`, falling back to
+  `<HALF_SHELL_DATA_DIR>/council.db` (default `.half-shell/council.db`) — the
+  same resolution the service uses, so run it with the same environment. If the
+  file does not exist yet, the page says so and picks it up once it appears.
+- **What it shows.** Recent runs newest-first (repository, PR, review ID and
+  generation, short head SHA, phase, status, Leo's verdict with blocking /
+  non-blocking counts, timestamps). A run's page shows the ordered Council event
+  stream with each actor named, current findings with Leo's per-finding
+  decision, the verdict, GitHub publication state, the evidence packet, and raw
+  JSON behind disclosures. Pages for active runs poll every 3 seconds.
+- **Read-only.** The database is opened with SQLite's own read-only flag; the
+  server answers only `GET`/`HEAD` on fixed routes (no SQL or query input) and
+  has no code path to trigger reviews, change findings or verdicts, or call
+  GitHub.
+- **Localhost only.** Binds `127.0.0.1:3001` by default
+  (`HALF_SHELL_DOJO_HOST`, `HALF_SHELL_DOJO_PORT`) and rejects requests whose
+  `Host` header is not loopback. Dojo v0 has **no authentication** and
+  transcripts can contain private-repository content, so a non-loopback host
+  refuses to start unless `HALF_SHELL_DOJO_ALLOW_REMOTE=true` is also set, and
+  then logs a warning. This is not the access-controlled transcript viewer
+  described in review-policy.md section 5.
+- **Docker.** The container writes `/data/council.db` on its volume; run Dojo
+  on a host that can read that file (for example a bind mount) rather than
+  publishing a port from inside the container.
+
 ## Operating notes
 
 - **Scale.** One instance serializes work per pull request; separate PRs run
