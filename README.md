@@ -184,6 +184,14 @@ Review a real pull request from the terminal without posting anything:
 node dist/cli.js --repo owner/name --pr 42 --installation 12345
 ```
 
+Watch Council runs live in a local, read-only viewer (Dojo v0):
+
+```bash
+npm run dojo  # builds, then serves http://127.0.0.1:3001/dojo
+```
+
+Dojo reads the Council database the service writes (`HALF_SHELL_COUNCIL_DATABASE_PATH`, default `.half-shell/council.db`) in SQLite read-only mode, binds to loopback only, and cannot trigger reviews, edit findings, or touch GitHub. See [`docs/deployment.md`](./docs/deployment.md#dojo-v0-local-council-viewer).
+
 Deploying: [`docs/deployment.md`](./docs/deployment.md) and the [`Dockerfile`](./Dockerfile).
 
 Configuration lives in the environment; see [`.env.example`](./.env.example) for the GitHub App credentials, the ordered inference chain, and the review budget. Implementation details are in [`docs/architecture/pipeline.md`](./docs/architecture/pipeline.md).

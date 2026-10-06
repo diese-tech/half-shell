@@ -53,10 +53,24 @@ CREATE TABLE IF NOT EXISTS council_verdicts (
 );
 `;
 
+export interface OrchestrationStoreOptions {
+  /**
+   * Opens the database through SQLite's own read-only mode: no directory
+   * creation, no schema/pragma setup, and every write method throws. Used
+   * by the local Dojo viewer (src/dojo/) so observing a run can never
+   * mutate it. The file must already exist.
+   */
+  readOnly?: boolean;
+}
+
 export class OrchestrationStore {
   private readonly db: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(path: string, options: OrchestrationStoreOptions = {}) {
+    if (options.readOnly) {
+      this.db = new DatabaseSync(path, { readOnly: true });
+      return;
+    }
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode = WAL');
@@ -104,6 +118,23 @@ export class OrchestrationStore {
           ORDER BY rowid ASC`,
       )
       .all(repositoryId, pullRequestNumber) as { payload: string }[];
+    return rows.map((row) => JSON.parse(row.payload) as ReviewRun);
+  }
+
+  /**
+   * Most recently created runs across every pull request, newest first.
+   * Ordered on the payload's createdAt rather than rowid, because
+   * saveReviewRun's INSERT OR REPLACE moves a run's rowid on every update.
+   */
+  async listRecentReviewRuns(limit: number): Promise<ReviewRun[]> {
+    const bounded = Math.max(1, Math.min(Math.floor(limit) || 1, 500));
+    const rows = this.db
+      .prepare(
+        `SELECT payload FROM review_runs
+          ORDER BY json_extract(payload, '$.createdAt') DESC, id DESC
+          LIMIT ?`,
+      )
+      .all(bounded) as { payload: string }[];
     return rows.map((row) => JSON.parse(row.payload) as ReviewRun);
   }
 

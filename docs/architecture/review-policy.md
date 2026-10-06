@@ -294,6 +294,8 @@ transcriptUrl?
 
 If there is no viewer/URL, do not render a fake link.
 
+Dojo v0 (`npm run dojo`, Issue #20) is a local, loopback-only, unauthenticated operator viewer over the Council store. It does not satisfy the transcript access rules below, so publication must not link to it as `View the Dojo`.
+
 ### Transcript access
 
 Transcript visibility inherits repository visibility and permissions:
