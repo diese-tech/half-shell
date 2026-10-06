@@ -30,7 +30,7 @@ function baseInput(overrides: Partial<WebhookIngestInput> = {}): WebhookIngestIn
     repo: REPO,
     githubDeliveryId: 'delivery-1',
     trigger: 'webhook',
-    changeContext: 'a diff',
+    changeContext: 'Changed files (line numbers are the head-side truth):\n--- src/import.ts\n   12 +   return ids.map((id) => load(id));',
     ...overrides,
   };
 }
@@ -184,6 +184,7 @@ describe('engine — end to end with fake providers', () => {
         findings: [
           {
             category: 'regression',
+            quote: 'return ids.map((id) => load(id));',
             claim: 'importRecords still calls load() without the tenant id',
             evidence: 'load() gained a required tenantId parameter but this call site passes only id',
             file: 'src/import.ts',

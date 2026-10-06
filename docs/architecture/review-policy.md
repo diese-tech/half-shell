@@ -426,6 +426,10 @@ type EvidenceRef = {
 
 Do not persist entire source files in the review record merely to preserve evidence. Store references and bounded excerpts/hashes when needed.
 
+### Quote grounding
+
+Every independent-review finding must quote, verbatim, a line from the changed files or the related files supplied as context. A finding whose quote does not appear there, or is too short to identify a line, is dropped before Sparring. It never becomes a candidate and costs no Sparring or Leo turns. The PR description does not count as a source for quotes. This is a floor, not proof: a grounded claim can still be wrong, and the quoted line goes into its evidence so later phases can use it to refute the claim.
+
 ### Secret handling
 
 Probable secrets/credentials are hazardous evidence.

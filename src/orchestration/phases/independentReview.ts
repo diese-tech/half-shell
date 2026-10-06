@@ -26,6 +26,7 @@ const INSTRUCTION = [
   '  "category": "bug|regression|security|contract|incomplete_change|missing_test|undocumented_behavior|operational|human_experience|operational_abuse|engineering_discipline",',
   '  "claim": "one sentence stating the defect",',
   '  "evidence": "what in the diff or context proves it",',
+  '  "quote": "one line copied exactly from the changed files that the claim is about",',
   '  "file": "path exactly as shown in the diff",',
   '  "line": head-side line number, or null,',
   '  "consequence": "the concrete way this fails at runtime or in practice",',
@@ -78,9 +79,13 @@ async function runLane(
         continue;
       }
       const raw = Array.isArray(parsed['findings']) ? (parsed['findings'] as Record<string, unknown>[]) : [];
+      const grounding = groundingText(changeContext);
       const findings = raw
-        .map((item) => normalize(item, codename))
+        .map((item) => normalize(item, codename, grounding))
         .filter((finding): finding is RawFinding => finding !== undefined);
+      if (findings.length < raw.length) {
+        log.info('dropped unusable or ungrounded findings', { persona: codename, kept: findings.length, dropped: raw.length - findings.length });
+      }
       return { persona: codename, ok: true, findings };
     }
     log.warn('independent review lane failed validation after retries', { persona: codename, error: lastError });
@@ -109,8 +114,34 @@ const CATEGORIES = new Set<FindingCategory>([
   'operational_abuse',
   'engineering_discipline',
 ]);
+
+const CODE_HEADING = 'Changed files (line numbers are the head-side truth):';
+/** Shorter quotes ("}", "return x;") match almost any diff and prove nothing. */
+const MIN_QUOTE_CHARS = 12;
+const squash = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+/**
+ * The code a quote must come from: the rendered diffs and related files,
+ * not the PR description above them, which is free text the author wrote.
+ */
+export function groundingText(changeContext: string): string {
+  const at = changeContext.indexOf(CODE_HEADING);
+  return squash(at === -1 ? changeContext : changeContext.slice(at + CODE_HEADING.length));
+}
+
+/**
+ * A claim is grounded when it quotes, verbatim, a line that actually exists
+ * in the change. Small models invent defects in code they never looked at;
+ * a quote that isn't there is the cheapest deterministic tell
+ * (review-policy.md section 8).
+ */
+export function isGrounded(quote: string, grounding: string): boolean {
+  const needle = squash(quote);
+  return needle.length >= MIN_QUOTE_CHARS && grounding.includes(needle);
+}
+
 // Severity is not modeled here — only Leo assigns it, in LEO_REVIEW.
-function normalize(item: Record<string, unknown>, persona: PersonaCodename): RawFinding | undefined {
+function normalize(item: Record<string, unknown>, persona: PersonaCodename, grounding: string): RawFinding | undefined {
   const category = String(item['category'] ?? '').toLowerCase() as FindingCategory;
   const file = typeof item['file'] === 'string' ? item['file'].trim() : '';
   const text = (key: string): string => (typeof item[key] === 'string' ? (item[key] as string).trim() : '');
@@ -120,6 +151,8 @@ function normalize(item: Record<string, unknown>, persona: PersonaCodename): Raw
   const evidence = text('evidence');
   const consequence = text('consequence');
   if (!claim || !evidence || !consequence) return undefined;
+  const quote = text('quote');
+  if (!isGrounded(quote, grounding)) return undefined;
 
   const confidence = Number(item['confidence']);
   const line = Number(item['line']);
@@ -128,7 +161,8 @@ function normalize(item: Record<string, unknown>, persona: PersonaCodename): Raw
     sourcePersona: persona,
     category,
     claim,
-    evidence,
+    // Carried into Sparring and Leo's view, so the line can also refute the claim.
+    evidence: `${evidence}\nQuoted: ${quote}`,
     affectedCode: {
       file,
       line: Number.isInteger(line) && line >= 1 ? line : null,

@@ -3,7 +3,38 @@ import { describe, expect, it } from 'vitest';
 import { minimalPersonaConfig, throwingProvider, ScriptedModelProvider } from '../testing/fakes.js';
 import type { ModelProvider } from '../provider.js';
 import type { PersonaCodename } from '../types.js';
-import { INDEPENDENT_REVIEWERS, runIndependentReview } from './independentReview.js';
+import { INDEPENDENT_REVIEWERS, groundingText, isGrounded, runIndependentReview } from './independentReview.js';
+
+const CHANGE = 'Description: fix totals\nChanged files (line numbers are the head-side truth):\n--- src/a.ts\n    3 + const total = items.length;';
+
+describe('quote grounding', () => {
+  const grounding = groundingText(CHANGE);
+
+  it('accepts a verbatim line from the diff, whitespace and markers aside', () => {
+    expect(isGrounded('const total =   items.length;', grounding)).toBe(true);
+    expect(isGrounded('3 + const total = items.length;', grounding)).toBe(true);
+  });
+
+  it('rejects an invented line, a trivially short one, and text from the PR description', () => {
+    expect(isGrounded('const total = escape(items);', grounding)).toBe(false);
+    expect(isGrounded('items', grounding)).toBe(false);
+    expect(isGrounded('Description: fix totals', grounding)).toBe(false);
+  });
+
+  it('drops a finding whose quote is not in the change, before it can reach Sparring', async () => {
+    const finding = { category: 'security', claim: 'no escaping', evidence: 'looks unsafe', file: 'src/a.ts', line: 3, consequence: 'XSS', confidence: 1 };
+    const provider = new ScriptedModelProvider({}, () => ({
+      findings: [
+        { ...finding, quote: 'res.end(userInput);' },
+        { ...finding, claim: 'unquoted' },
+        { ...finding, claim: 'grounded', quote: 'const total = items.length;' },
+      ],
+    }));
+    const [outcome] = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
+    expect(outcome?.findings.map((f) => f.claim)).toEqual(['grounded']);
+    expect(outcome?.findings[0]?.evidence).toContain('Quoted: const total = items.length;');
+  });
+});
 
 describe('runIndependentReview', () => {
   it('runs all four specialists and normalizes their findings', async () => {
@@ -13,6 +44,7 @@ describe('runIndependentReview', () => {
           category: 'regression',
           claim: 'a real finding',
           evidence: 'proof',
+          quote: 'const total = items.length;',
           file: 'src/a.ts',
           line: 3,
           consequence: 'it breaks',
@@ -24,7 +56,7 @@ describe('runIndependentReview', () => {
     const outcomes = await runIndependentReview(
       () => provider,
       (codename) => minimalPersonaConfig({ codename }),
-      'the diff',
+      CHANGE,
     );
 
     expect(outcomes).toHaveLength(4);
@@ -64,10 +96,10 @@ describe('runIndependentReview', () => {
     const provider = new ScriptedModelProvider({}, () => ({
       findings: [
         { category: 'regression', claim: 'missing evidence and consequence', file: 'src/a.ts' },
-        { category: 'regression', claim: 'valid one', evidence: 'proof', consequence: 'breaks', file: 'src/a.ts', confidence: 0.5 },
+        { category: 'regression', claim: 'valid one', evidence: 'proof', quote: 'const total = items.length;', consequence: 'breaks', file: 'src/a.ts', confidence: 0.5 },
       ],
     }));
-    const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), 'ctx');
+    const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
     expect(outcomes[0]?.findings).toHaveLength(1);
     expect(outcomes[0]?.findings[0]?.claim).toBe('valid one');
   });
@@ -79,6 +111,7 @@ describe('runIndependentReview', () => {
           category: 'operational_abuse',
           claim: 'hitting the endpoint twice writes twice',
           evidence: 'reproduced by calling it back to back',
+          quote: 'const total = items.length;',
           file: 'src/handler.ts',
           line: 9,
           consequence: 'duplicate records',
@@ -87,7 +120,7 @@ describe('runIndependentReview', () => {
         },
       ],
     }));
-    const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), 'ctx');
+    const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
     const outcome = outcomes.find((o) => o.persona === 'casey');
     expect(outcome?.ok).toBe(true);
     expect(outcome?.findings[0]?.rootCause).toBeNull();
