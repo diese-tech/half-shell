@@ -45,6 +45,9 @@ setDefault('HALF_SHELL_REVIEW_ENGINE', 'council');
 setDefault('HALF_SHELL_PROVIDERS', 'ollama');
 setDefault('HALF_SHELL_PROVIDER_OLLAMA_MODEL', DEFAULT_MODEL);
 setDefault('HALF_SHELL_PROVIDER_OLLAMA_BASE_URL', DEFAULT_OLLAMA_URL);
+// The service default (2 min) is sized for hosted APIs; a local model on a
+// real PR prompt routinely needs longer per turn. Same ceiling as --harness.
+setDefault('HALF_SHELL_PROVIDER_OLLAMA_TIMEOUT_MS', String(10 * 60_000));
 
 const model = env('HALF_SHELL_PROVIDER_OLLAMA_MODEL')!;
 const ollamaUrl = env('HALF_SHELL_PROVIDER_OLLAMA_BASE_URL')!;

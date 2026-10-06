@@ -147,7 +147,9 @@ npm run local -- --harness  # Ollama + Dojo + one sample Council review, no cred
 It loads `./.env` if present, then fills in local defaults for anything unset:
 `HALF_SHELL_REVIEW_ENGINE=council`, `HALF_SHELL_PROVIDERS=ollama`,
 `HALF_SHELL_PROVIDER_OLLAMA_MODEL=qwen2.5-coder:14b`,
-`HALF_SHELL_PROVIDER_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`.
+`HALF_SHELL_PROVIDER_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`,
+`HALF_SHELL_PROVIDER_OLLAMA_TIMEOUT_MS=600000` (the service's 2-minute default
+is too short for a local model on a real PR prompt).
 
 - **Ollama.** If nothing answers at that URL and it is a loopback address,
   the launcher runs `ollama serve` (Ollama must be installed and on `PATH`),
