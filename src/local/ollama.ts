@@ -24,7 +24,8 @@ export interface EnsureOllamaOptions {
 
 export interface EnsureOllamaDependencies {
   fetch?: typeof fetch;
-  spawnServe?: () => ChildProcess;
+  /** Receives the native URL so the server listens where Half-Shell will call it. */
+  spawnServe?: (nativeUrl: string) => ChildProcess;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -45,8 +46,13 @@ export function hasModel(installed: string[], model: string): boolean {
   return installed.some((name) => name === model || name === wanted);
 }
 
-function defaultSpawnServe(): ChildProcess {
-  return spawn('ollama', ['serve'], { stdio: 'ignore', windowsHide: true });
+/** `ollama serve` binds OLLAMA_HOST (default 127.0.0.1:11434), not the URL Half-Shell was given. */
+function defaultSpawnServe(nativeUrl: string): ChildProcess {
+  return spawn('ollama', ['serve'], {
+    stdio: 'ignore',
+    windowsHide: true,
+    env: { ...process.env, OLLAMA_HOST: new URL(nativeUrl).host },
+  });
 }
 
 async function listModels(fetchImpl: typeof fetch, nativeUrl: string): Promise<string[] | undefined> {
@@ -77,7 +83,7 @@ export async function ensureOllama(
       throw new Error(`Ollama is not reachable at ${nativeUrl}, and it is not local, so it will not be started automatically.`);
     }
     log(`Ollama is not running at ${nativeUrl}; starting \`ollama serve\`...`);
-    const child = (dependencies.spawnServe ?? defaultSpawnServe)();
+    const child = (dependencies.spawnServe ?? defaultSpawnServe)(nativeUrl);
     started = child;
     let spawnError: Error | undefined;
     child.once('error', (error) => {

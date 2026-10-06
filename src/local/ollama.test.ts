@@ -59,6 +59,19 @@ describe('ensureOllama', () => {
     expect(result.started).toBe(child);
   });
 
+  it('starts the server on the configured port, not Ollama\'s default', async () => {
+    const state = { up: false };
+    const { fetchImpl, calls } = fakeOllama(state);
+    const spawnServe = vi.fn((_nativeUrl: string) => {
+      state.up = true;
+      return fakeChild();
+    });
+    await ensureOllama({ baseUrl: 'http://127.0.0.1:11435/v1', model: MODEL }, { fetch: fetchImpl, spawnServe, sleep: noSleep });
+
+    expect(spawnServe).toHaveBeenCalledWith('http://127.0.0.1:11435');
+    expect(calls.every((c) => c.url.startsWith('http://127.0.0.1:11435/'))).toBe(true);
+  });
+
   it('never starts a server for a remote Ollama URL', async () => {
     const { fetchImpl } = fakeOllama({ up: false });
     const spawnServe = vi.fn(fakeChild);
