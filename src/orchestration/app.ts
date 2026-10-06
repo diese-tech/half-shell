@@ -150,10 +150,26 @@ export class CouncilApp {
     };
 
     const result = await ingest(deps, input);
+    await this.recordTokenUsage(result.reviewId, router);
     log.info('council review ingested', {
       pr: job.pullNumber,
       reviewId: result.reviewId,
       outcome: result.outcome,
+    });
+  }
+
+  /** The router is per-job, so its stats are exactly this job's spend; added, since a resumed run is billed again. */
+  private async recordTokenUsage(reviewId: string, router: ProviderRouter): Promise<void> {
+    const { promptTokens, completionTokens } = router.stats;
+    if (promptTokens === 0 && completionTokens === 0) return;
+    const run = await this.store.getReviewRun(reviewId);
+    if (!run) return;
+    await this.store.saveReviewRun({
+      ...run,
+      tokenUsage: {
+        promptTokens: run.tokenUsage.promptTokens + promptTokens,
+        completionTokens: run.tokenUsage.completionTokens + completionTokens,
+      },
     });
   }
 }
