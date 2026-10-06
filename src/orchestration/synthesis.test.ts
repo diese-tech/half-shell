@@ -73,11 +73,30 @@ describe('synthesize — deduplication with preserved provenance', () => {
     expect(result).toEqual([only]);
   });
 
-  it('keeps findings about different files or categories entirely separate', () => {
+  it('keeps findings about different files entirely separate', () => {
     const a = toCandidate('rev_1', raw({ affectedCode: { file: 'src/a.ts', line: 1, startLine: null } }));
     const b = toCandidate('rev_1', raw({ affectedCode: { file: 'src/b.ts', line: 1, startLine: null } }));
     const result = synthesize([a, b]);
     expect(result).toHaveLength(2);
+    expect(result.every((f) => f.relatedFindings.length === 0)).toBe(true);
+  });
+
+  it('links one defect filed under different categories at nearby lines', () => {
+    const raph = toCandidate('rev_1', raw({ sourcePersona: 'raph', category: 'regression', affectedCode: { file: 'src/import.ts', line: 12, startLine: null } }));
+    const donnie = toCandidate(
+      'rev_1',
+      raw({ sourcePersona: 'donnie', category: 'incomplete_change', claim: 'load() is called without a tenantId.', affectedCode: { file: 'src/import.ts', line: 11, startLine: null } }),
+    );
+    const result = synthesize([raph, donnie]);
+    expect(result.find((f) => f.id === raph.id)?.relatedFindings).toEqual([donnie.id]);
+    expect(result.find((f) => f.id === donnie.id)?.relatedFindings).toEqual([raph.id]);
+  });
+
+  it('keeps distant lines, and unknown lines in other categories, separate', () => {
+    const top = toCandidate('rev_1', raw({ affectedCode: { file: 'src/import.ts', line: 1, startLine: null } }));
+    const bottom = toCandidate('rev_1', raw({ claim: 'other', affectedCode: { file: 'src/import.ts', line: 80, startLine: null } }));
+    const noLine = toCandidate('rev_1', raw({ category: 'human_experience', claim: 'docs', affectedCode: { file: 'src/import.ts', line: null, startLine: null } }));
+    const result = synthesize([top, bottom, noLine]);
     expect(result.every((f) => f.relatedFindings.length === 0)).toBe(true);
   });
 });

@@ -56,6 +56,10 @@ export function classifyCorroboration(claims: CorroboratingClaim[]): Corroborati
     // multiple independent reviewers stated the same unsupported claim
     // without evidence, that's worse, not better — flag the penalty.
     type = contributingSourcePersonas.length > 1 ? 'repeated_unsupported_assumption' : 'shared_assumption';
+  } else if (contributingSourcePersonas.length === 1) {
+    // One reviewer filing several evidenced claims is one perspective, not
+    // independent confirmation — nothing to gain from its own repetition.
+    type = 'shared_assumption';
   } else if (anyUnsupported) {
     // A mix — treat conservatively as a shared assumption rather than
     // rewarding a poorly-evidenced claim just because one contributor did

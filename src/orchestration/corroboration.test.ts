@@ -63,6 +63,16 @@ describe('classifyCorroboration', () => {
     expect(result.confidenceEffect).toBe('no_confidence_gain');
   });
 
+  it('gives no gain to a single persona filing several evidenced claims — that is not independent', () => {
+    const result = classifyCorroboration([
+      claim({ sourcePersona: 'casey', evidenceKey: 'stale-state' }),
+      claim({ sourcePersona: 'casey', evidenceKey: 'reconnects' }),
+      claim({ sourcePersona: 'casey', evidenceKey: 'retries' }),
+    ]);
+    expect(result.type).toBe('shared_assumption');
+    expect(result.confidenceEffect).toBe('no_confidence_gain');
+  });
+
   it('requires at least two claims', () => {
     expect(() => classifyCorroboration([claim({})])).toThrow();
   });

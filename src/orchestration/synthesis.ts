@@ -66,8 +66,26 @@ function normalize(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function groupKey(finding: CouncilFinding): string {
-  return `${finding.affectedCode.file}::${finding.category}`;
+/** Lines this close in one file are the same spot, whatever category each reviewer filed it under. */
+const NEARBY_LINES = 3;
+
+function sameArea(a: CouncilFinding, b: CouncilFinding): boolean {
+  if (a.affectedCode.file !== b.affectedCode.file) return false;
+  const lineA = a.affectedCode.line ?? a.affectedCode.startLine;
+  const lineB = b.affectedCode.line ?? b.affectedCode.startLine;
+  if (lineA === null || lineB === null) return lineA === lineB && a.category === b.category;
+  return Math.abs(lineA - lineB) <= NEARBY_LINES;
+}
+
+// ponytail: first-match clustering, so a chain of nearby findings can split into two groups; fine at review sizes.
+function groupByArea(findings: CouncilFinding[]): CouncilFinding[][] {
+  const groups: CouncilFinding[][] = [];
+  for (const finding of findings) {
+    const group = groups.find((members) => members.some((member) => sameArea(member, finding)));
+    if (group) group.push(finding);
+    else groups.push([finding]);
+  }
+  return groups;
 }
 
 function toClaim(finding: CouncilFinding, evidenceKeyOverride?: Map<string, string>): CorroboratingClaim {
@@ -89,7 +107,9 @@ function applyEffect(base: number, effect: Corroboration['confidenceEffect']): n
 }
 
 /**
- * Groups candidate findings that touch the same file + category, then:
+ * Groups candidate findings that touch the same spot — same file and
+ * within NEARBY_LINES of each other, or same file + category when a line
+ * is unknown — then:
  *  - collapses claims that are literally the same statement: the first
  *    keeps its id and becomes canonical, the rest are marked "merged"
  *    pointing at it via relatedFindings, and every contributing persona is
@@ -101,17 +121,9 @@ function applyEffect(base: number, effect: Corroboration['confidenceEffect']): n
  *    compare it against yet
  */
 export function synthesize(findings: CouncilFinding[]): CouncilFinding[] {
-  const groups = new Map<string, CouncilFinding[]>();
-  for (const finding of findings) {
-    const key = groupKey(finding);
-    const bucket = groups.get(key) ?? [];
-    bucket.push(finding);
-    groups.set(key, bucket);
-  }
-
   const results: CouncilFinding[] = [];
 
-  for (const group of groups.values()) {
+  for (const group of groupByArea(findings)) {
     const byClaim = new Map<string, CouncilFinding[]>();
     for (const finding of group) {
       const key = normalize(finding.claim);
@@ -140,7 +152,7 @@ export function synthesize(findings: CouncilFinding[]): CouncilFinding[] {
       continue;
     }
 
-    // Multiple genuinely different claims about the same file+category —
+    // Multiple genuinely different claims about the same spot —
     // link them rather than picking a winner. Each keeps its own id and evidence.
     const canonicalPerClaim = distinctClaimGroups.map((dupes) => dupes[0] as CouncilFinding);
     const claims = canonicalPerClaim.map((f) => toClaim(f));
