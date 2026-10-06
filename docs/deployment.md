@@ -134,6 +134,38 @@ npm run dojo
   on a host that can read that file (for example a bind mount) rather than
   publishing a port from inside the container.
 
+## Local Council on Ollama (`npm run local`)
+
+One command for a local Council session on your own machine (Windows, macOS
+or Linux):
+
+```bash
+npm run local               # Ollama + Dojo + webhook service (needs GitHub App creds in .env)
+npm run local -- --harness  # Ollama + Dojo + one sample Council review, no credentials
+```
+
+It loads `./.env` if present, then fills in local defaults for anything unset:
+`HALF_SHELL_REVIEW_ENGINE=council`, `HALF_SHELL_PROVIDERS=ollama`,
+`HALF_SHELL_PROVIDER_OLLAMA_MODEL=qwen2.5-coder:14b`,
+`HALF_SHELL_PROVIDER_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`.
+
+- **Ollama.** If nothing answers at that URL and it is a loopback address,
+  the launcher runs `ollama serve` (Ollama must be installed and on `PATH`),
+  waits for it, checks the model is already pulled, and preloads it into
+  memory so the first persona turn isn't also the model-load. It never pulls a
+  model and never starts anything for a non-local URL. If Ollama was already
+  running, it is reused and left running on exit.
+- **Dojo** starts on `http://127.0.0.1:3001/dojo` against the same Council
+  database.
+- **Webhook service** starts only when `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`
+  and `GITHUB_WEBHOOK_SECRET` are set; GitHub still needs a public URL (a
+  tunnel) to deliver webhooks to it. Without them, use `--harness`.
+- **`--harness`** runs one sample Council review against stub GitHub and your
+  real Ollama model, written to the Dojo database
+  (`HALF_SHELL_HARNESS_COUNCIL_DATABASE_PATH`), then leaves Dojo running.
+- **Ctrl+C** stops Dojo, the service, and the Ollama server only if this
+  launcher started it.
+
 ## Operating notes
 
 - **Scale.** One instance serializes work per pull request; separate PRs run

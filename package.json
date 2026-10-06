@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.test.json",
     "harness": "node dist/harness/run.js",
-    "dojo": "tsc -p tsconfig.json && node dist/dojo/main.js"
+    "dojo": "tsc -p tsconfig.json && node dist/dojo/main.js",
+    "local": "tsc -p tsconfig.json && node dist/local/main.js"
   },
   "dependencies": {
     "ajv": "^8.17.1",

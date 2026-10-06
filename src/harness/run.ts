@@ -31,8 +31,12 @@ import { HARNESS_REPO, pullRequestEvent, startHarness } from './harness.js';
 async function main(): Promise<number> {
   const ollamaModel = process.env['HALF_SHELL_HARNESS_OLLAMA_MODEL'];
   const reviewEngine = process.env['HALF_SHELL_REVIEW_ENGINE'] === 'council' ? 'council' : 'v1';
+  // Lets `npm run local -- --harness` keep the Council run in a database Dojo
+  // reads; otherwise it lives in the harness's temp dir and is deleted on stop.
+  const councilDatabasePath = process.env['HALF_SHELL_HARNESS_COUNCIL_DATABASE_PATH'];
   const configure = ollamaModel
     ? (config: Config): void => {
+        if (councilDatabasePath) config.councilDatabasePath = councilDatabasePath;
         config.providers = [
           {
             id: 'ollama',
@@ -43,7 +47,11 @@ async function main(): Promise<number> {
           },
         ];
       }
-    : undefined;
+    : councilDatabasePath
+      ? (config: Config): void => {
+          config.councilDatabasePath = councilDatabasePath;
+        }
+      : undefined;
 
   const harness = await startHarness({
     script: reviewEngine === 'council' ? defaultCouncilScript() : defaultScript(),
