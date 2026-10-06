@@ -108,6 +108,24 @@ export async function ensureOllama(
     log(`Ollama already running at ${nativeUrl}.`);
   }
 
+  try {
+    await prepareModel(fetchImpl, nativeUrl, models, options, log);
+  } catch (error) {
+    // The caller never receives `started` on failure, so it couldn't stop
+    // the server we just launched — do it here rather than orphan it.
+    started?.kill();
+    throw error;
+  }
+  return { started, nativeUrl };
+}
+
+async function prepareModel(
+  fetchImpl: typeof fetch,
+  nativeUrl: string,
+  models: string[],
+  options: EnsureOllamaOptions,
+  log: (message: string) => void,
+): Promise<void> {
   if (!hasModel(models, options.model)) {
     throw new Error(
       `Ollama does not have "${options.model}" pulled (installed: ${models.join(', ') || 'none'}). Run \`ollama pull ${options.model}\` first.`,
@@ -127,6 +145,4 @@ export async function ensureOllama(
     throw new Error(`Ollama could not load ${options.model}: HTTP ${warm.status} ${await warm.text()}`);
   }
   log(`${options.model} is loaded.`);
-
-  return { started, nativeUrl };
 }

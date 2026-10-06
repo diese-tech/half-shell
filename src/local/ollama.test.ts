@@ -101,6 +101,18 @@ describe('ensureOllama', () => {
     );
     expect(calls.some((c) => c.url.endsWith('/api/pull'))).toBe(false);
   });
+
+  it('stops the server it started when the model turns out to be missing', async () => {
+    const state = { up: false, models: ['llama3:latest'] };
+    const { fetchImpl } = fakeOllama(state);
+    const child = fakeChild();
+    const spawnServe = () => {
+      state.up = true;
+      return child;
+    };
+    await expect(ensureOllama({ baseUrl: BASE, model: MODEL }, { fetch: fetchImpl, spawnServe, sleep: noSleep })).rejects.toThrow('ollama pull');
+    expect(child.kill).toHaveBeenCalled();
+  });
 });
 
 describe('helpers', () => {
