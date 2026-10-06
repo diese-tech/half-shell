@@ -87,6 +87,8 @@ async function main(): Promise<number> {
     }
 
     if (harness.council) {
+      // Token usage is saved after publication, once the job returns.
+      await harness.council.app.idle();
       const runs = await harness.council.store.listRunsForPullRequest(
         `${HARNESS_REPO.owner}/${HARNESS_REPO.repo}`,
         SAMPLE_PULL_REQUEST.number,
@@ -96,10 +98,14 @@ async function main(): Promise<number> {
       const verdict = run ? await harness.council.store.getVerdict(run.id) : undefined;
       process.stdout.write(
         `completed in ${Date.now() - started}ms · engine: council · candidates: ${findings.length}` +
-          ` · surviving sparring: ${findings.filter((f) => f.status === 'surviving_sparring' || f.status === 'narrowed').length}` +
+          // Leo is handed exactly the Sparring survivors; their own status has moved on by now.
+          ` · reached leo: ${verdict?.findings.length ?? 0}` +
           ` · leo-approved: ${verdict?.findings.filter((f) => f.outcome === 'publish').length ?? 0}` +
           ` · published: ${findings.filter((f) => f.status === 'published').length}` +
-          ` · provider calls: ${harness.inference.requests.length}\n`,
+          // The stub inference server is never hit on the Ollama path.
+          (ollamaModel
+            ? ` · tokens: ${run?.tokenUsage.promptTokens ?? 0} in / ${run?.tokenUsage.completionTokens ?? 0} out\n`
+            : ` · provider calls: ${harness.inference.requests.length}\n`),
       );
     } else if (ollamaModel) {
       // The stub inference server is never hit on this path, so its request
