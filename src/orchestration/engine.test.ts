@@ -232,6 +232,56 @@ describe('engine — end to end with fake providers', () => {
     expect(findings.some((f) => f.status === 'published')).toBe(true);
   });
 
+  it('persists a finding as published when a complete review actually publishes it', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).toBe('published');
+    expect(github.state.reviews[0]?.body).toContain('importRecords still calls load()');
+    const decision = (await store.getVerdict(result.reviewId))?.findings.find((d) => d.findingId === finding?.id);
+    expect(decision?.outcome).toBe('publish');
+  });
+
+  it('never persists published when the PR head moved and nothing was posted', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
+    github.state.headSha = 'moved-on';
+
+    const result = await ingest(deps, baseInput());
+
+    expect(github.state.reviews).toHaveLength(0);
+    expect((await store.listFindings(result.reviewId)).some((f) => f.status === 'published')).toBe(false);
+  });
+
+  it('keeps persisted state consistent with GitHub when a coverage gap (no quarantine) forces incomplete', async () => {
+    const script = realFindingScript('non_blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'donnie:INDEPENDENT_REVIEW': () => {
+        throw new Error('lane provider down');
+      },
+      'leo:LEO_REVIEW': (request) => {
+        const decision = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...decision, findings: decision.findings.map((f) => ({ ...f, blocking: false, blocking_reason: null })) };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.rationale).toContain('required independent-review lane failed');
+    const [finding] = await store.listFindings(result.reviewId);
+    // Leo's decision survives as adjudication history; the effective publication does not.
+    expect(verdict?.findings.find((d) => d.findingId === finding?.id)?.outcome).toBe('publish');
+    expect(finding?.status).not.toBe('published');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    const suppressed = (await store.listEvents(result.reviewId)).find((e) => e.findingId === finding?.id && e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed?.metadata).toMatchObject({ leoOutcome: 'publish', overallOutcome: 'incomplete' });
+  });
+
   it('records each provenance drop as an event with its reason, and never makes it a candidate', async () => {
     const script = realFindingScript('blocking_findings_published');
     deps = buildDeps({
@@ -320,8 +370,18 @@ describe('engine — end to end with fake providers', () => {
 
     const findings = await store.listFindings(result.reviewId);
     expect(findings.map((f) => f.status).sort()).toContain('quarantined');
-    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
     expect(github.state.reviews[0]?.event).toBe('COMMENT');
+
+    // The verified finding Leo chose to publish: Leo's decision is kept, but
+    // GitHub received no finding, so persisted state must not claim one.
+    const verified = findings.find((f) => f.status !== 'quarantined');
+    expect(verdict?.findings.find((d) => d.findingId === verified?.id)?.outcome).toBe('publish');
+    expect(verified?.status).not.toBe('published');
+    expect(findings.some((f) => f.status === 'published')).toBe(false);
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    expect((await store.listEvents(result.reviewId)).some((e) => e.findingId === verified?.id && e.metadata?.['publication'] === 'suppressed')).toBe(true);
   });
 
   it('with zero survivors, a clean verdict still requires Shredder to CONCUR_CLEAN on the case file', async () => {

@@ -504,12 +504,15 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
       await store.saveVerdict(verdict);
       await recordEvent(store, { reviewId: current.id, phase: 'LEO_REVIEW', actor: 'leo', eventType: 'verdict_recorded' });
 
+      // Leo's decision is adjudication, not publication: `published` is only
+      // written by PUBLICATION once GitHub accepts the review that carries
+      // the finding (phases/publication.ts), never here.
       for (const decision of verdict.findings) {
         const finding = await store.getFinding(decision.findingId);
         if (!finding) continue;
         await store.saveFinding({
           ...finding,
-          status: decision.outcome === 'publish' ? 'published' : decision.outcome === 'reject' ? 'rejected' : finding.status,
+          status: decision.outcome === 'reject' ? 'rejected' : finding.status,
           severity: decision.finalSeverity,
         });
       }

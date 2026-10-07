@@ -142,6 +142,15 @@ describe('Dojo read model', () => {
     expect(summarizeVerdict(undefined)).toBeNull();
   });
 
+  it('reports zero published findings for an incomplete review, whatever Leo would have published', () => {
+    expect(summarizeVerdict(verdict({ overallOutcome: 'incomplete' }))).toEqual({
+      overallOutcome: 'incomplete',
+      blocking: 0,
+      nonBlocking: 0,
+      notPublished: 3,
+    });
+  });
+
   it('builds run detail with events in sequence order', async () => {
     await writer.saveReviewRun(run());
     await writer.appendEvent({ id: 'evt_a', reviewId: 'rev_1', phase: 'INDEPENDENT_REVIEW', actor: 'raph', eventType: 'persona_message', findingId: null, content: 'first', metadata: null, createdAt: 't1' });

@@ -5,6 +5,7 @@
  * evidence_packets / council_verdicts tables — there is no second
  * persistence model, and nothing in this module can write.
  */
+import { effectivelyPublished } from '../orchestration/phases/publication.js';
 import type { OrchestrationStore } from '../orchestration/store.js';
 import type {
   CouncilEvent,
@@ -72,7 +73,8 @@ export function isActive(run: ReviewRun): boolean {
 
 export function summarizeVerdict(verdict: Verdict | undefined | null): VerdictSummary | null {
   if (!verdict) return null;
-  const published = verdict.findings.filter((f) => f.outcome === 'publish');
+  // Effective publication, not Leo's raw intent: an incomplete review published nothing.
+  const published = effectivelyPublished(verdict);
   const blocking = published.filter((f) => f.blocking).length;
   return {
     overallOutcome: verdict.overallOutcome,

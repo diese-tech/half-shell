@@ -155,8 +155,10 @@ function renderFindings(findings: CouncilFinding[], verdict: Verdict | null): st
     .map((f) => {
       const d = decisions.get(f.id);
       const where = `${f.affectedCode.file}${f.affectedCode.line != null ? `:${f.affectedCode.line}` : ''}`;
+      // Leo's decision is adjudication history; an incomplete review published none of it.
+      const suppressed = d?.outcome === 'publish' && verdict?.overallOutcome === 'incomplete';
       const decision = d
-        ? `<div class="decision">Leo: ${badge(d.outcome, d.outcome === 'publish' ? 'ok' : 'muted')} ${d.blocking ? badge('blocking', 'bad') : badge('non-blocking', 'muted')} ${d.finalSeverity ? badge(d.finalSeverity, 'muted') : ''}<div>${escapeHtml(d.publicReason)}</div>${d.blockingReason ? `<div class="small">Blocking reason: ${escapeHtml(d.blockingReason)}</div>` : ''}</div>`
+        ? `<div class="decision">Leo: ${badge(d.outcome, d.outcome === 'publish' ? 'ok' : 'muted')}${suppressed ? ` ${badge('publication suppressed: review incomplete', 'bad')}` : ''} ${d.blocking ? badge('blocking', 'bad') : badge('non-blocking', 'muted')} ${d.finalSeverity ? badge(d.finalSeverity, 'muted') : ''}<div>${escapeHtml(d.publicReason)}</div>${d.blockingReason ? `<div class="small">Blocking reason: ${escapeHtml(d.blockingReason)}</div>` : ''}</div>`
         : '';
       return `<div class="finding actor-${actorClass(f.sourcePersona)}" id="${escapeHtml(f.id)}">
 <div class="event-head"><code>${escapeHtml(shortId(f.id))}</code> <span class="actor">${escapeHtml(actorName(f.sourcePersona))}</span> ${badge(f.status, 'muted')} ${badge(f.category, 'muted')} ${f.severity ? badge(f.severity, 'muted') : ''} <span class="small">confidence ${escapeHtml(f.confidence)}</span> <code class="small">${escapeHtml(where)}</code></div>

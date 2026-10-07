@@ -9,7 +9,7 @@
 import type { RepoRef } from '../../types.js';
 import { recordEvent } from '../events.js';
 import type { OrchestrationStore } from '../store.js';
-import type { GitHubReviewOutcome, ReviewRun, Verdict } from '../types.js';
+import type { GitHubReviewOutcome, ReviewRun, Verdict, VerdictFindingDecision } from '../types.js';
 
 /** Everything Publication needs from the GitHub client — a structural subset GitHubClient already satisfies. */
 export interface PublicationGitHubClient {
@@ -45,13 +45,25 @@ export interface PublicationGitHubClient {
  */
 export function determineOutcome(verdict: Verdict): GitHubReviewOutcome {
   if (verdict.overallOutcome === 'incomplete') return 'COMMENT';
-  const published = verdict.findings.filter((f) => f.outcome === 'publish');
-  const blocking = published.some((f) => f.blocking);
+  const blocking = effectivelyPublished(verdict).some((f) => f.blocking);
   return blocking ? 'REQUEST_CHANGES' : 'COMMENT';
 }
 
+/**
+ * The decisions that actually reach GitHub — the one place anything
+ * (review body, GitHub outcome, persisted finding status, Dojo) asks "was
+ * this published?". The stored verdict stays Leo's adjudication record: an
+ * `incomplete` review keeps Leo's `publish` decisions as what Leo *would*
+ * have published, but publishes none of them (review-policy.md section 4,
+ * Incomplete review).
+ */
+export function effectivelyPublished(verdict: Verdict): VerdictFindingDecision[] {
+  if (verdict.overallOutcome === 'incomplete') return [];
+  return verdict.findings.filter((f) => f.outcome === 'publish');
+}
+
 export function renderReviewBody(verdict: Verdict): string {
-  const published = verdict.findings.filter((f) => f.outcome === 'publish');
+  const published = effectivelyPublished(verdict);
   const lines = ['## Half-Shell Council Review', ''];
   if (verdict.overallOutcome === 'incomplete') {
     lines.push(
@@ -126,6 +138,29 @@ export async function publish(
     event: githubReviewOutcome,
     commit_id: run.headSha,
   });
+
+  // A finding is `published` only once GitHub accepted the review that
+  // carries it. Leo's suppressed publish decisions stay in the verdict and
+  // are marked here, so "would have published" survives without the
+  // finding's status claiming something GitHub never received.
+  const published = new Set(effectivelyPublished(verdict).map((d) => d.findingId));
+  for (const decision of verdict.findings.filter((d) => d.outcome === 'publish')) {
+    const finding = await store.getFinding(decision.findingId);
+    if (!finding) continue;
+    if (published.has(decision.findingId)) {
+      await store.saveFinding({ ...finding, status: 'published' });
+    } else {
+      await recordEvent(store, {
+        reviewId: run.id,
+        phase: 'PUBLICATION',
+        actor: 'orchestrator',
+        eventType: 'finding_updated',
+        findingId: decision.findingId,
+        content: `publication suppressed: Leo would have published this, but the review is ${verdict.overallOutcome}`,
+        metadata: { publication: 'suppressed', leoOutcome: 'publish', overallOutcome: verdict.overallOutcome },
+      });
+    }
+  }
 
   await recordEvent(store, {
     reviewId: run.id,
