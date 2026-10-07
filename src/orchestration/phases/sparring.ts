@@ -287,3 +287,62 @@ export async function confirmCleanReview(
     return { ok: false, concurs: false, note: error instanceof Error ? error.message : String(error) };
   }
 }
+
+export const COMPLETION_RESULTS = ['CONCUR_CLEAN', 'OBJECT', 'INSUFFICIENT_COVERAGE'] as const;
+export type CompletionResult = (typeof COMPLETION_RESULTS)[number];
+
+const ZERO_SURVIVORS_INSTRUCTION = [
+  'Phase: SPARRING — required completion. Findings were raised, but every one',
+  'was filtered or rejected before Sparring (ungrounded, wrong file, or',
+  'refuted by its own cited code), so nothing reached you to challenge. Zero',
+  'surviving findings is NOT the same as a clean review. You have the case',
+  'file, its open unknowns, and a summary of what was dropped and why. Decide:',
+  '',
+  '- CONCUR_CLEAN: the case file gives no reason to think a material defect',
+  '  was missed, and no unknown blocks judging merge-readiness.',
+  '- OBJECT: you can name a specific concern the filtered lanes left unaddressed.',
+  '- INSUFFICIENT_COVERAGE: the open unknowns, or what was dropped, leave too',
+  '  little covered to call this clean either way.',
+  '',
+  'Do not concur just because nothing survived.',
+  '',
+  'Respond with a single JSON object: {"result": "CONCUR_CLEAN" | "OBJECT" | "INSUFFICIENT_COVERAGE", "note": "one or two sentences"}',
+].join('\n');
+
+export interface ZeroSurvivorCompletion {
+  /** False when no valid result came back; the caller must treat Shredder as not having completed. */
+  ok: boolean;
+  result?: CompletionResult;
+  note: string;
+}
+
+/**
+ * Shredder's required adversarial step when Sparring has nothing to spar
+ * over because every finding was filtered before it (review-policy.md
+ * section 17). Same role obligation as confirmCleanReview on the early-exit
+ * path, but told explicitly that zero survivors is not a clean result.
+ */
+export async function completeWithoutSurvivors(
+  provider: ModelProvider,
+  persona: PersonaConfig,
+  brief: string,
+): Promise<ZeroSurvivorCompletion> {
+  try {
+    const response = await provider.generate({
+      persona: 'shredder',
+      phase: 'SPARRING',
+      systemPrompt: personaSystemPrompt(persona, ZERO_SURVIVORS_INSTRUCTION),
+      userPrompt: brief,
+      json: true,
+      temperature: 0.2,
+    });
+    const parsed = parseJsonObject<Record<string, unknown>>(response.text);
+    const result = String(parsed?.['result'] ?? '').trim().toUpperCase();
+    if (!(COMPLETION_RESULTS as readonly string[]).includes(result)) {
+      return { ok: false, note: 'response was not one of CONCUR_CLEAN, OBJECT, INSUFFICIENT_COVERAGE' };
+    }
+    return { ok: true, result: result as CompletionResult, note: typeof parsed?.['note'] === 'string' ? parsed['note'] : '' };
+  } catch (error) {
+    return { ok: false, note: error instanceof Error ? error.message : String(error) };
+  }
+}

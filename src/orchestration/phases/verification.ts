@@ -13,9 +13,9 @@
  * survives.
  *
  * If no answer is available (the call errors, or the reply isn't a valid
- * verdict), the caller keeps the finding unverified rather than dropping it.
- * Otherwise a provider failure could turn a real defect into a "clean"
- * review, which a failed review must never become.
+ * verdict), the caller quarantines the finding and the review becomes
+ * incomplete: a provider failure must never produce a clean review, and an
+ * unverified finding must never publish as though verified.
  */
 import { log, errorFields } from '../../logger.js';
 import type { PersonaConfig } from '../../personas/types.js';

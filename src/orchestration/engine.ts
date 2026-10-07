@@ -17,7 +17,7 @@ import { runIndependentReview } from './phases/independentReview.js';
 import { runLeoReview } from './phases/leoReview.js';
 import { applyLessons, runMentorship } from './phases/mentorship.js';
 import { publish, type PublicationGitHubClient } from './phases/publication.js';
-import { confirmCleanReview, spar } from './phases/sparring.js';
+import { completeWithoutSurvivors, confirmCleanReview, spar } from './phases/sparring.js';
 import { verificationSubject, verifyFinding } from './phases/verification.js';
 import { parseChangedFiles } from './grounding.js';
 import type { ModelProvider } from './provider.js';
@@ -80,8 +80,9 @@ const REJECTION_REASON = { CONTRADICTS: 'semantic_contradiction', INSUFFICIENT: 
 /**
  * Only findings the verifier says their own cited code SUPPORTS go on to
  * Sparring (phases/verification.ts). Every outcome is recorded, with the
- * reason, so drops can be told apart. A finding with no verdict (verifier
- * unavailable) stays unverified rather than being silently dropped.
+ * reason, so drops can be told apart. A finding with no valid verdict
+ * (verifier unavailable) is quarantined: never published, and LEO_REVIEW's
+ * fail-safe forces the whole review incomplete.
  */
 async function verifyCandidates(deps: EngineDependencies, run: ReviewRun, candidates: CouncilFinding[], changeContext: string): Promise<void> {
   const files = parseChangedFiles(changeContext);
@@ -95,7 +96,10 @@ async function verifyCandidates(deps: EngineDependencies, run: ReviewRun, candid
     }
     const result = await verifyFinding(deps.providerFor('shredder'), persona(deps, 'shredder'), subject);
     if (!result) {
-      await recordEvent(deps.store, { ...base, eventType: 'finding_updated', content: 'verification unavailable; kept unverified', metadata: { verification: 'unavailable' } });
+      // No valid verdict: neither dropped as if refuted nor kept as if verified.
+      // Quarantined findings never publish, and the review becomes incomplete.
+      await deps.store.saveFinding({ ...finding, status: 'quarantined' });
+      await recordEvent(deps.store, { ...base, eventType: 'finding_updated', content: 'quarantined: verifier gave no valid verdict', metadata: { verification: 'unavailable', reason: 'verifier_unavailable' } });
     } else if (result.verdict === 'SUPPORTS') {
       await recordEvent(deps.store, { ...base, eventType: 'finding_updated', content: `verified: SUPPORTS — ${result.reason}`, metadata: { verification: 'SUPPORTS', verifierReason: result.reason } });
     } else {
@@ -311,7 +315,35 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
         noGuardrailOrHistoryTrigger: !(await store.listEvents(current.id)).some((e) => e.eventType === 'lesson_added'),
       });
 
-      if (!early) {
+      if (!early && survivors.length === 0) {
+        // Every finding was filtered before Sparring, but early exit didn't
+        // apply (e.g. open unknowns). Zero survivors is not clean: Shredder
+        // still owes a required adversarial step, on the case file and what
+        // was dropped (phases/sparring.ts completeWithoutSurvivors).
+        const events = await store.listEvents(current.id);
+        const dropped: Record<string, number> = {};
+        for (const e of events) {
+          const reason = e.metadata?.['reason'];
+          if ((e.eventType === 'finding_withdrawn' || e.eventType === 'finding_updated') && typeof reason === 'string') {
+            dropped[reason] = (dropped[reason] ?? 0) + 1;
+          }
+        }
+        const completion = await completeWithoutSurvivors(
+          deps.providerFor('shredder'),
+          persona(deps, 'shredder'),
+          JSON.stringify({ survivingFindings: 0, droppedBeforeSparring: dropped, caseFile: (await store.getEvidencePacket(current.id)) ?? {} }),
+        );
+        await recordEvent(store, {
+          reviewId: current.id,
+          phase: 'SPARRING',
+          actor: 'shredder',
+          // CONCUR_CLEAN counts as Shredder completing; anything else is recorded
+          // so LEO_REVIEW's fail-safe refuses a clean verdict.
+          eventType: !completion.ok ? 'validation_failed' : completion.result === 'CONCUR_CLEAN' ? 'challenge_accepted' : 'observation_recorded',
+          content: completion.ok ? `${completion.result}: ${completion.note}` : completion.note,
+          metadata: { completion: completion.result ?? 'unavailable' },
+        });
+      } else if (!early) {
         const tracker = new SparringChallengeTracker(deps.challengeBudget ?? DEFAULT_CHALLENGE_BUDGET);
         const settled: CouncilFinding[] = [];
         for (const finding of survivors) {
@@ -428,14 +460,25 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
       const shredderRaisedUnresolvedObjection = sparringEvents.some(
         (e) => e.actor === 'shredder' && e.eventType === 'observation_recorded',
       );
+      const insufficientCoverage = sparringEvents.some(
+        (e) => e.actor === 'shredder' && e.metadata?.['completion'] === 'INSUFFICIENT_COVERAGE',
+      );
+      // A quarantined finding was never verified either way, so nothing about
+      // this review is trustworthy as clean, and no verdict here may stand in
+      // for it — forced incomplete even if other findings published.
+      const verifierQuarantined = (await store.listFindings(current.id)).some((f) => f.status === 'quarantined');
       const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
       const requiredCoverageMissing = requiredLaneFailed || shredderRequiredRoleMissing || shredderRaisedUnresolvedObjection;
-      if (requiredCoverageMissing && !anyBlockingPublished && verdict.overallOutcome !== 'incomplete') {
-        const reason = requiredLaneFailed
-          ? 'a required independent-review lane failed'
-          : shredderRaisedUnresolvedObjection
-            ? 'Shredder objected to treating this as a clean review'
-            : 'Shredder — a required role in every review — never completed';
+      if (verdict.overallOutcome !== 'incomplete' && (verifierQuarantined || (requiredCoverageMissing && !anyBlockingPublished))) {
+        const reason = verifierQuarantined
+          ? 'a finding was quarantined because its verification gave no valid verdict'
+          : requiredLaneFailed
+            ? 'a required independent-review lane failed'
+            : insufficientCoverage
+              ? 'Shredder judged the remaining coverage insufficient to call this clean'
+              : shredderRaisedUnresolvedObjection
+                ? 'Shredder objected to treating this as a clean review'
+                : 'Shredder — a required role in every review — never completed';
         verdict = {
           ...verdict,
           overallOutcome: 'incomplete',

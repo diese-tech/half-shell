@@ -441,7 +441,7 @@ At the end of Synthesis, before Sparring and Leo, each surviving candidate gets 
 - `CONTRADICTS`: the code prevents or handles the harm, or the text states the behaviour is intentional and bounds the risk. The finding is rejected as a semantic contradiction.
 - `INSUFFICIENT`: the code neither makes the harm happen nor prevents it. The finding is rejected for insufficient evidence.
 
-Every outcome is recorded with its reason. If the verifier gives no valid verdict (the call errors, or the answer is outside the three), the finding stays, marked unverified. A provider failure must never turn a real defect into a clean review.
+Every outcome is recorded with its reason. If the verifier gives no valid verdict (the call errors, or the answer is outside the three), the finding is **quarantined**. It is never published, and the whole review is forced to `incomplete`, even if other, verified findings would publish. An unavailable verifier must never produce a clean review, and must never let a finding publish as though it were verified.
 
 ### Secret handling
 
@@ -745,6 +745,17 @@ Shredder participates in every review, but adversarial effort is proportional to
 Blocking findings, P0/P1 findings, inferred failure paths, weakly supported claims, acceptance-criterion blockers, and unusually consequential claims receive stronger challenge.
 
 Shredder retains a finite code-enforced challenge budget and no veto authority.
+
+Zero surviving findings is not a clean review. Sometimes every finding is filtered or rejected before Sparring (Quote grounding, section 8) and the early exit does not apply, for example because the case file has open unknowns. Shredder must still complete a required adversarial step in that case. It receives the case file, its unknowns, and a summary of what was dropped and why, and answers `CONCUR_CLEAN`, `OBJECT`, or `INSUFFICIENT_COVERAGE`.
+
+A clean verdict requires all of the following:
+
+- every mandatory Council role completed, Shredder's step included;
+- Shredder concurred (`CONCUR_CLEAN`);
+- no material coverage gap remains;
+- no finding was quarantined by a verifier failure.
+
+Anything else, including an invalid or failed Shredder response, makes the review `incomplete`.
 
 ### Leonardo remand
 

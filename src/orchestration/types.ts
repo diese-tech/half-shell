@@ -123,7 +123,9 @@ export type FindingStatus =
   | 'withdrawn'
   | 'investigation_requested'
   | 'published'
-  | 'rejected';
+  | 'rejected'
+  /** Its semantic verification gave no valid verdict: never reviewed further, never published, and the review is incomplete. */
+  | 'quarantined';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 

@@ -268,16 +268,95 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.event).not.toBe('REQUEST_CHANGES');
   });
 
-  it('keeps a finding unverified, never silently dropped, when the verifier gives no verdict', async () => {
-    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => 'not json at all' });
+  /** A case file with an open unknown, so a review left with zero survivors cannot take the early exit. */
+  const OPEN_CASE_FILE = () => ({
+    facts: [{ statement: 'load() gained a required tenantId parameter' }],
+    sources: [{ kind: 'diff', reference: 'src/import.ts' }],
+    relevance: ['the contract change'],
+    inferences: [],
+    unknowns: [{ question: 'whether legacy callers still pass only an id' }],
+    stated_intent: 'scope loading to a tenant',
+    unresolved_context: [],
+  });
+  const CLEAN_LEO = () => ({ overall_outcome: 'clean_review', rationale: 'nothing survived', findings: [], unresolved_uncertainty: [] });
+
+  function zeroSurvivorScript(shredderSays: object): Partial<Record<string, ScriptedResponder>> {
+    return {
+      ...realFindingScript('clean_review'),
+      'april:CASE_FILE': OPEN_CASE_FILE,
+      'shredder:SYNTHESIS': () => ({ verdict: 'CONTRADICTS', reason: 'the call site passes the tenant' }),
+      'shredder:SPARRING': () => shredderSays,
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    };
+  }
+
+  it('quarantines a finding whose verifier gives no valid verdict: never published, review incomplete', async () => {
+    // Leo never sees the quarantined finding, so from where Leo sits nothing survived.
+    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => 'not json at all', 'leo:LEO_REVIEW': CLEAN_LEO });
 
     const result = await ingest(deps, baseInput());
 
     const [finding] = await store.listFindings(result.reviewId);
-    expect(finding?.status).toBe('published');
+    expect(finding?.status).toBe('quarantined');
     const events = await store.listEvents(result.reviewId);
-    expect(events.find((e) => e.eventType === 'finding_updated' && e.findingId === finding?.id)?.metadata).toMatchObject({ verification: 'unavailable' });
-    expect(github.state.reviews[0]?.event).toBe('REQUEST_CHANGES');
+    expect(events.find((e) => e.eventType === 'finding_updated' && e.findingId === finding?.id)?.metadata).toMatchObject({ verification: 'unavailable', reason: 'verifier_unavailable' });
+    expect(events.some((e) => e.phase === 'SPARRING' && e.findingId === finding?.id)).toBe(false);
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+  });
+
+  it('forces the review incomplete on any quarantine, even when another verified blocking finding publishes', async () => {
+    const script = realFindingScript('blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'donnie:INDEPENDENT_REVIEW': () => ({
+        findings: [{ category: 'contract', claim: 'second claim on the same call', evidence: 'e', quote: 'return ids.map((id) => load(id));', file: 'src/import.ts', line: 12, consequence: 'c', confidence: 0.8 }],
+      }),
+      'shredder:SYNTHESIS': (request) => (request.userPrompt.includes('second claim') ? 'garbage' : { verdict: 'SUPPORTS', reason: 'only id is passed' }),
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const findings = await store.listFindings(result.reviewId);
+    expect(findings.map((f) => f.status).sort()).toContain('quarantined');
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+  });
+
+  it('with zero survivors, a clean verdict still requires Shredder to CONCUR_CLEAN on the case file', async () => {
+    deps = buildDeps(zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'the unknown does not block merge-readiness' }));
+
+    const result = await ingest(deps, baseInput());
+
+    const completion = (await store.listEvents(result.reviewId)).find((e) => e.phase === 'SPARRING' && e.actor === 'shredder');
+    expect(completion).toMatchObject({ eventType: 'challenge_accepted', metadata: { completion: 'CONCUR_CLEAN' } });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('clean_review');
+    expect(github.state.reviews[0]?.body).toContain('Shell clear');
+  });
+
+  it.each([
+    ['OBJECT', { result: 'OBJECT', note: 'the legacy caller path was never examined' }, 'objected'],
+    ['INSUFFICIENT_COVERAGE', { result: 'INSUFFICIENT_COVERAGE', note: 'too much was dropped' }, 'coverage insufficient'],
+    ['an invalid answer', { concurs: true }, 'never completed'],
+  ])('with zero survivors, %s from Shredder makes the review incomplete, never clean', async (_label, shredderSays, why) => {
+    deps = buildDeps(zeroSurvivorScript(shredderSays));
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.rationale).toContain(why);
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  it('with zero survivors, CONCUR_CLEAN still cannot make a review with a quarantined finding clean', async () => {
+    deps = buildDeps({ ...zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'fine' }), 'shredder:SYNTHESIS': () => 'garbage' });
+
+    const result = await ingest(deps, baseInput());
+
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
   it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {
