@@ -191,6 +191,17 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
           });
           continue;
         }
+        // Refused by the provenance gate: never candidates, but kept on the record with why.
+        for (const dropped of outcome.dropped) {
+          await recordEvent(store, {
+            reviewId: current.id,
+            phase: 'INDEPENDENT_REVIEW',
+            actor: 'orchestrator',
+            eventType: 'finding_withdrawn',
+            content: `dropped before Sparring (${dropped.reason}): ${dropped.claim} — ${dropped.detail}`,
+            metadata: { ...dropped },
+          });
+        }
         const candidates = outcome.findings.map((raw) => toCandidate(current.id, raw));
         await store.saveFindings(candidates);
         for (const candidate of candidates) {

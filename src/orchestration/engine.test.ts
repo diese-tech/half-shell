@@ -30,7 +30,7 @@ function baseInput(overrides: Partial<WebhookIngestInput> = {}): WebhookIngestIn
     repo: REPO,
     githubDeliveryId: 'delivery-1',
     trigger: 'webhook',
-    changeContext: 'Changed files (line numbers are the head-side truth):\n--- src/import.ts\n   12 +   return ids.map((id) => load(id));',
+    changeContext: 'Changed files (line numbers are the head-side truth):\n\n--- src/import.ts (modified, +1/-0)\n   12 +   return ids.map((id) => load(id));',
     ...overrides,
   };
 }
@@ -229,6 +229,25 @@ describe('engine — end to end with fake providers', () => {
 
     const findings = await store.listFindings(result.reviewId);
     expect(findings.some((f) => f.status === 'published')).toBe(true);
+  });
+
+  it('records each provenance drop as an event with its reason, and never makes it a candidate', async () => {
+    const script = realFindingScript('blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'raph:INDEPENDENT_REVIEW': () => ({
+        findings: [
+          { category: 'security', claim: 'wrong file', evidence: 'e', quote: 'return ids.map((id) => load(id));', file: 'docs/deployment.md', line: 103, consequence: 'c', confidence: 1 },
+        ],
+      }),
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    expect(await store.listFindings(result.reviewId)).toEqual([]);
+    const drop = (await store.listEvents(result.reviewId)).find((e) => e.eventType === 'finding_withdrawn');
+    expect(drop?.phase).toBe('INDEPENDENT_REVIEW');
+    expect(drop?.metadata).toMatchObject({ reason: 'provenance_mismatch', persona: 'raph', file: 'docs/deployment.md' });
   });
 
   it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {

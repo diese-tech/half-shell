@@ -3,36 +3,40 @@ import { describe, expect, it } from 'vitest';
 import { minimalPersonaConfig, throwingProvider, ScriptedModelProvider } from '../testing/fakes.js';
 import type { ModelProvider } from '../provider.js';
 import type { PersonaCodename } from '../types.js';
-import { INDEPENDENT_REVIEWERS, groundingText, isGrounded, runIndependentReview } from './independentReview.js';
+import { INDEPENDENT_REVIEWERS, runIndependentReview } from './independentReview.js';
 
-const CHANGE = 'Description: fix totals\nChanged files (line numbers are the head-side truth):\n--- src/a.ts\n    3 + const total = items.length;';
+const CHANGE = [
+  'Description: fix totals',
+  'Changed files (line numbers are the head-side truth):',
+  '',
+  '--- src/a.ts (modified, +1/-0)',
+  '        @@ -2,1 +2,2 @@',
+  '    2   import { items } from "./items";',
+  '    3 + const total = items.length;',
+  '',
+  '--- src/b.ts (added, +1/-0)',
+  '    1 + export const elsewhere = "only in b.ts";',
+].join('\n');
 
-describe('quote grounding', () => {
-  const grounding = groundingText(CHANGE);
-
-  it('accepts a verbatim line from the diff, whitespace and markers aside', () => {
-    expect(isGrounded('const total =   items.length;', grounding)).toBe(true);
-    expect(isGrounded('3 + const total = items.length;', grounding)).toBe(true);
-  });
-
-  it('rejects an invented line, a trivially short one, and text from the PR description', () => {
-    expect(isGrounded('const total = escape(items);', grounding)).toBe(false);
-    expect(isGrounded('items', grounding)).toBe(false);
-    expect(isGrounded('Description: fix totals', grounding)).toBe(false);
-  });
-
-  it('drops a finding whose quote is not in the change, before it can reach Sparring', async () => {
+describe('independent review provenance gate', () => {
+  it('keeps grounded findings and drops the rest with a reason, before they can reach Sparring', async () => {
     const finding = { category: 'security', claim: 'no escaping', evidence: 'looks unsafe', file: 'src/a.ts', line: 3, consequence: 'XSS', confidence: 1 };
     const provider = new ScriptedModelProvider({}, () => ({
       findings: [
-        { ...finding, quote: 'res.end(userInput);' },
+        { ...finding, claim: 'invented', quote: 'res.end(userInput);' },
         { ...finding, claim: 'unquoted' },
+        { ...finding, claim: 'wrong file', quote: 'export const elsewhere = "only in b.ts";' },
         { ...finding, claim: 'grounded', quote: 'const total = items.length;' },
       ],
     }));
     const [outcome] = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
     expect(outcome?.findings.map((f) => f.claim)).toEqual(['grounded']);
     expect(outcome?.findings[0]?.evidence).toContain('Quoted: const total = items.length;');
+    expect(outcome?.dropped.map((d) => [d.claim, d.reason])).toEqual([
+      ['invented', 'ungrounded_quote'],
+      ['unquoted', 'ungrounded_quote'],
+      ['wrong file', 'provenance_mismatch'],
+    ]);
   });
 });
 
@@ -112,8 +116,8 @@ describe('runIndependentReview', () => {
           claim: 'hitting the endpoint twice writes twice',
           evidence: 'reproduced by calling it back to back',
           quote: 'const total = items.length;',
-          file: 'src/handler.ts',
-          line: 9,
+          file: 'src/a.ts',
+          line: 3,
           consequence: 'duplicate records',
           confidence: 0.6,
           root_cause: null,

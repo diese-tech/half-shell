@@ -428,7 +428,12 @@ Do not persist entire source files in the review record merely to preserve evide
 
 ### Quote grounding
 
-Every independent-review finding must quote, verbatim, a line from the changed files or the related files supplied as context. A finding whose quote does not appear there, or is too short to identify a line, is dropped before Sparring. It never becomes a candidate and costs no Sparring or Leo turns. The PR description does not count as a source for quotes. This is a floor, not proof: a grounded claim can still be wrong, and the quoted line goes into its evidence so later phases can use it to refute the claim.
+Every independent-review finding must quote, verbatim, a line from the changed file it claims. A finding is dropped before Sparring, without becoming a candidate, in either of two cases:
+
+- **Ungrounded quote:** the quote is missing, too short to identify a line, or not in any changed file.
+- **Provenance mismatch:** the quote comes from a different file than the one claimed, the claimed file is not a changed file in the review, or the finding names a line and the quote's head-side line is not within a few lines of it.
+
+Each drop is recorded as an event that carries its reason. The PR description and related-context files never count as sources, because no finding may be claimed against them. If the changed-files section of the rendered context cannot be parsed, nothing is grounded: the check fails closed and never falls back to the full prompt. This is a floor, not proof. A grounded claim can still be wrong, so the quoted line goes into its evidence.
 
 ### Secret handling
 

@@ -11,6 +11,7 @@ import type { PersonaConfig } from '../../personas/types.js';
 import { parseJsonObject } from '../../providers/json.js';
 import type { ModelProvider } from '../provider.js';
 import { personaSystemPrompt } from '../prompt.js';
+import { groundQuote, parseChangedFiles, withQuote, type ChangedFiles, type DropReason } from '../grounding.js';
 import type { RawFinding } from '../synthesis.js';
 import type { FindingCategory, PersonaCodename } from '../types.js';
 
@@ -26,7 +27,7 @@ const INSTRUCTION = [
   '  "category": "bug|regression|security|contract|incomplete_change|missing_test|undocumented_behavior|operational|human_experience|operational_abuse|engineering_discipline",',
   '  "claim": "one sentence stating the defect",',
   '  "evidence": "what in the diff or context proves it",',
-  '  "quote": "one line copied exactly from the changed files that the claim is about",',
+  '  "quote": "one line copied exactly from the changed file you name below, at or near the line you give",',
   '  "file": "path exactly as shown in the diff",',
   '  "line": head-side line number, or null,',
   '  "consequence": "the concrete way this fails at runtime or in practice",',
@@ -36,10 +37,22 @@ const INSTRUCTION = [
   '}',
 ].join('\n');
 
+/** A well-formed finding the provenance gate refused, kept for telemetry — never reviewed further. */
+export interface DroppedFinding {
+  persona: PersonaCodename;
+  claim: string;
+  file: string;
+  line: number | null;
+  quote: string;
+  reason: DropReason;
+  detail: string;
+}
+
 export interface LaneOutcome {
   persona: PersonaCodename;
   ok: boolean;
   findings: RawFinding[];
+  dropped: DroppedFinding[];
   error?: string;
 }
 
@@ -79,23 +92,25 @@ async function runLane(
         continue;
       }
       const raw = Array.isArray(parsed['findings']) ? (parsed['findings'] as Record<string, unknown>[]) : [];
-      const grounding = groundingText(changeContext);
-      const findings = raw
-        .map((item) => normalize(item, codename, grounding))
-        .filter((finding): finding is RawFinding => finding !== undefined);
-      if (findings.length < raw.length) {
-        log.info('dropped unusable or ungrounded findings', { persona: codename, kept: findings.length, dropped: raw.length - findings.length });
+      const files = parseChangedFiles(changeContext);
+      const results = raw.map((item) => normalize(item, codename, files));
+      const findings = results.flatMap((result) => (result && 'finding' in result ? [result.finding] : []));
+      const dropped = results.flatMap((result) => (result && 'dropped' in result ? [result.dropped] : []));
+      const malformed = results.filter((result) => result === undefined).length;
+      if (dropped.length > 0 || malformed > 0) {
+        log.info('independent review findings dropped', { persona: codename, kept: findings.length, dropped: dropped.length, malformed });
       }
-      return { persona: codename, ok: true, findings };
+      return { persona: codename, ok: true, findings, dropped };
     }
     log.warn('independent review lane failed validation after retries', { persona: codename, error: lastError });
-    return { persona: codename, ok: false, findings: [], error: lastError };
+    return { persona: codename, ok: false, findings: [], dropped: [], error: lastError };
   } catch (error) {
     log.warn('independent review lane failed', { persona: codename, ...errorFields(error) });
     return {
       persona: codename,
       ok: false,
       findings: [],
+      dropped: [],
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -115,33 +130,13 @@ const CATEGORIES = new Set<FindingCategory>([
   'engineering_discipline',
 ]);
 
-const CODE_HEADING = 'Changed files (line numbers are the head-side truth):';
-/** Shorter quotes ("}", "return x;") match almost any diff and prove nothing. */
-const MIN_QUOTE_CHARS = 12;
-const squash = (text: string): string => text.replace(/\s+/g, ' ').trim();
-
-/**
- * The code a quote must come from: the rendered diffs and related files,
- * not the PR description above them, which is free text the author wrote.
- */
-export function groundingText(changeContext: string): string {
-  const at = changeContext.indexOf(CODE_HEADING);
-  return squash(at === -1 ? changeContext : changeContext.slice(at + CODE_HEADING.length));
-}
-
-/**
- * A claim is grounded when it quotes, verbatim, a line that actually exists
- * in the change. Small models invent defects in code they never looked at;
- * a quote that isn't there is the cheapest deterministic tell
- * (review-policy.md section 8).
- */
-export function isGrounded(quote: string, grounding: string): boolean {
-  const needle = squash(quote);
-  return needle.length >= MIN_QUOTE_CHARS && grounding.includes(needle);
-}
-
 // Severity is not modeled here — only Leo assigns it, in LEO_REVIEW.
-function normalize(item: Record<string, unknown>, persona: PersonaCodename, grounding: string): RawFinding | undefined {
+// Undefined for a malformed item; a well-formed one either grounds or is dropped with a reason.
+function normalize(
+  item: Record<string, unknown>,
+  persona: PersonaCodename,
+  files: ChangedFiles,
+): { finding: RawFinding } | { dropped: DroppedFinding } | undefined {
   const category = String(item['category'] ?? '').toLowerCase() as FindingCategory;
   const file = typeof item['file'] === 'string' ? item['file'].trim() : '';
   const text = (key: string): string => (typeof item[key] === 'string' ? (item[key] as string).trim() : '');
@@ -151,26 +146,28 @@ function normalize(item: Record<string, unknown>, persona: PersonaCodename, grou
   const evidence = text('evidence');
   const consequence = text('consequence');
   if (!claim || !evidence || !consequence) return undefined;
-  const quote = text('quote');
-  if (!isGrounded(quote, grounding)) return undefined;
 
   const confidence = Number(item['confidence']);
-  const line = Number(item['line']);
+  const rawLine = Number(item['line']);
+  const line = Number.isInteger(rawLine) && rawLine >= 1 ? rawLine : null;
+  const quote = text('quote');
+  const grounding = groundQuote(files, { file, line, quote });
+  if (!grounding.ok) return { dropped: { persona, claim, file, line, quote, reason: grounding.reason, detail: grounding.detail } };
 
-  return {
+  return { finding: {
     sourcePersona: persona,
     category,
     claim,
     // Carried into Sparring and Leo's view, so the line can also refute the claim.
-    evidence: `${evidence}\nQuoted: ${quote}`,
+    evidence: withQuote(evidence, quote),
     affectedCode: {
       file,
-      line: Number.isInteger(line) && line >= 1 ? line : null,
+      line,
       startLine: null,
     },
     consequence,
     confidence: Number.isFinite(confidence) ? Math.min(Math.max(confidence, 0), 1) : 0.5,
     proposedFix: typeof item['proposed_fix'] === 'string' ? item['proposed_fix'] : null,
     rootCause: typeof item['root_cause'] === 'string' ? item['root_cause'] : null,
-  };
+  } };
 }
