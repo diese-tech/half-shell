@@ -197,6 +197,7 @@ describe('engine — end to end with fake providers', () => {
       'donnie:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'mikey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
       'casey:INDEPENDENT_REVIEW': () => ({ findings: [] }),
+      'shredder:SYNTHESIS': () => ({ verdict: 'SUPPORTS', reason: 'the call site passes only id' }),
       'shredder:SPARRING': () => ({ action: 'accept' }),
       'leo:LEO_REVIEW': (request) => ({
         overall_outcome: leoOverallOutcome,
@@ -248,6 +249,35 @@ describe('engine — end to end with fake providers', () => {
     const drop = (await store.listEvents(result.reviewId)).find((e) => e.eventType === 'finding_withdrawn');
     expect(drop?.phase).toBe('INDEPENDENT_REVIEW');
     expect(drop?.metadata).toMatchObject({ reason: 'provenance_mismatch', persona: 'raph', file: 'docs/deployment.md' });
+  });
+
+  it.each([
+    ['CONTRADICTS', 'semantic_contradiction'],
+    ['INSUFFICIENT', 'insufficient_evidence'],
+  ])('rejects a %s finding before Sparring, recording why', async (verdict, reason) => {
+    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => ({ verdict, reason: 'because' }) });
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).toBe('rejected');
+    const events = await store.listEvents(result.reviewId);
+    const withdrawn = events.find((e) => e.eventType === 'finding_withdrawn' && e.findingId === finding?.id);
+    expect(withdrawn).toMatchObject({ phase: 'SYNTHESIS', actor: 'shredder', metadata: { reason, verification: verdict } });
+    expect(events.some((e) => e.phase === 'SPARRING' && e.findingId === finding?.id)).toBe(false);
+    expect(github.state.reviews[0]?.event).not.toBe('REQUEST_CHANGES');
+  });
+
+  it('keeps a finding unverified, never silently dropped, when the verifier gives no verdict', async () => {
+    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => 'not json at all' });
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).toBe('published');
+    const events = await store.listEvents(result.reviewId);
+    expect(events.find((e) => e.eventType === 'finding_updated' && e.findingId === finding?.id)?.metadata).toMatchObject({ verification: 'unavailable' });
+    expect(github.state.reviews[0]?.event).toBe('REQUEST_CHANGES');
   });
 
   it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {

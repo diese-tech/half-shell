@@ -18,6 +18,8 @@ import { runLeoReview } from './phases/leoReview.js';
 import { applyLessons, runMentorship } from './phases/mentorship.js';
 import { publish, type PublicationGitHubClient } from './phases/publication.js';
 import { confirmCleanReview, spar } from './phases/sparring.js';
+import { verificationSubject, verifyFinding } from './phases/verification.js';
+import { parseChangedFiles } from './grounding.js';
 import type { ModelProvider } from './provider.js';
 import { DEFAULT_CHALLENGE_BUDGET, SparringChallengeTracker, type ChallengeBudgetConfig } from './sparring.js';
 import type { OrchestrationStore } from './store.js';
@@ -71,6 +73,42 @@ async function fail(store: OrchestrationStore, run: ReviewRun, status: 'failed_r
   await store.saveReviewRun(updated);
   await recordEvent(store, { reviewId: run.id, phase: run.currentPhase, actor: 'orchestrator', eventType: 'run_failed', content: error });
   return updated;
+}
+
+const REJECTION_REASON = { CONTRADICTS: 'semantic_contradiction', INSUFFICIENT: 'insufficient_evidence' } as const;
+
+/**
+ * Only findings the verifier says their own cited code SUPPORTS go on to
+ * Sparring (phases/verification.ts). Every outcome is recorded, with the
+ * reason, so drops can be told apart. A finding with no verdict (verifier
+ * unavailable) stays unverified rather than being silently dropped.
+ */
+async function verifyCandidates(deps: EngineDependencies, run: ReviewRun, candidates: CouncilFinding[], changeContext: string): Promise<void> {
+  const files = parseChangedFiles(changeContext);
+  for (const finding of candidates) {
+    const base = { reviewId: run.id, phase: 'SYNTHESIS' as const, actor: 'shredder' as const, findingId: finding.id };
+    const subject = verificationSubject(finding, files);
+    if (!subject) {
+      await deps.store.saveFinding({ ...finding, status: 'rejected' });
+      await recordEvent(deps.store, { ...base, eventType: 'finding_withdrawn', content: 'rejected (ungrounded_quote): no quote that grounds in its claimed file', metadata: { reason: 'ungrounded_quote' } });
+      continue;
+    }
+    const result = await verifyFinding(deps.providerFor('shredder'), persona(deps, 'shredder'), subject);
+    if (!result) {
+      await recordEvent(deps.store, { ...base, eventType: 'finding_updated', content: 'verification unavailable; kept unverified', metadata: { verification: 'unavailable' } });
+    } else if (result.verdict === 'SUPPORTS') {
+      await recordEvent(deps.store, { ...base, eventType: 'finding_updated', content: `verified: SUPPORTS — ${result.reason}`, metadata: { verification: 'SUPPORTS', verifierReason: result.reason } });
+    } else {
+      const reason = REJECTION_REASON[result.verdict];
+      await deps.store.saveFinding({ ...finding, status: 'rejected' });
+      await recordEvent(deps.store, {
+        ...base,
+        eventType: 'finding_withdrawn',
+        content: `rejected (${reason}): ${result.verdict} — ${result.reason}`,
+        metadata: { reason, verification: result.verdict, verifierReason: result.reason },
+      });
+    }
+  }
 }
 
 async function phaseAlreadyCompleted(store: OrchestrationStore, reviewId: string, phase: ReviewRun['currentPhase']): Promise<boolean> {
@@ -251,6 +289,7 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
       const candidates = (await store.listFindings(current.id)).filter((f) => f.status === 'candidate');
       const synthesized = synthesize(candidates);
       await store.saveFindings(synthesized);
+      await verifyCandidates(deps, current, synthesized.filter((f) => f.status === 'candidate'), input.changeContext);
     }
     await completePhase(store, current);
     current = await transitionTo(store, current, 'SPARRING');
