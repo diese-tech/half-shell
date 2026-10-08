@@ -37,14 +37,14 @@ const INSTRUCTION = [
   '}',
 ].join('\n');
 
-/** A well-formed finding the provenance gate refused, kept for telemetry — never reviewed further. */
+/** A finding refused before it became a candidate (malformed, or by the provenance gate), kept on the record — never reviewed further. */
 export interface DroppedFinding {
   persona: PersonaCodename;
   claim: string;
   file: string;
   line: number | null;
   quote: string;
-  reason: DropReason;
+  reason: DropReason | 'malformed_finding';
   detail: string;
 }
 
@@ -91,14 +91,13 @@ async function runLane(
         lastError = 'response was not valid JSON';
         continue;
       }
-      const raw = Array.isArray(parsed['findings']) ? (parsed['findings'] as Record<string, unknown>[]) : [];
+      const raw: unknown[] = Array.isArray(parsed['findings']) ? parsed['findings'] : [];
       const files = parseChangedFiles(changeContext);
       const results = raw.map((item) => normalize(item, codename, files));
-      const findings = results.flatMap((result) => (result && 'finding' in result ? [result.finding] : []));
-      const dropped = results.flatMap((result) => (result && 'dropped' in result ? [result.dropped] : []));
-      const malformed = results.filter((result) => result === undefined).length;
-      if (dropped.length > 0 || malformed > 0) {
-        log.info('independent review findings dropped', { persona: codename, kept: findings.length, dropped: dropped.length, malformed });
+      const findings = results.flatMap((result) => ('finding' in result ? [result.finding] : []));
+      const dropped = results.flatMap((result) => ('dropped' in result ? [result.dropped] : []));
+      if (dropped.length > 0) {
+        log.info('independent review findings dropped', { persona: codename, kept: findings.length, dropped: dropped.length });
       }
       return { persona: codename, ok: true, findings, dropped };
     }
@@ -131,21 +130,30 @@ const CATEGORIES = new Set<FindingCategory>([
 ]);
 
 // Severity is not modeled here — only Leo assigns it, in LEO_REVIEW.
-// Undefined for a malformed item; a well-formed one either grounds or is dropped with a reason.
+// Every item either becomes a finding or is dropped with a reason — a
+// malformed one included, so discarded model output is never invisible
+// (a review that discarded output must not take the clean early exit).
 function normalize(
-  item: Record<string, unknown>,
+  value: unknown,
   persona: PersonaCodename,
   files: ChangedFiles,
-): { finding: RawFinding } | { dropped: DroppedFinding } | undefined {
+): { finding: RawFinding } | { dropped: DroppedFinding } {
+  const item = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
   const category = String(item['category'] ?? '').toLowerCase() as FindingCategory;
   const file = typeof item['file'] === 'string' ? item['file'].trim() : '';
   const text = (key: string): string => (typeof item[key] === 'string' ? (item[key] as string).trim() : '');
-
-  if (!CATEGORIES.has(category) || !file) return undefined;
   const claim = text('claim');
   const evidence = text('evidence');
   const consequence = text('consequence');
-  if (!claim || !evidence || !consequence) return undefined;
+
+  if (!CATEGORIES.has(category) || !file || !claim || !evidence || !consequence) {
+    const missing = ['category', 'file', 'claim', 'evidence', 'consequence'].filter((key) =>
+      key === 'category' ? !CATEGORIES.has(category) : key === 'file' ? !file : !text(key),
+    );
+    return {
+      dropped: { persona, claim, file, line: null, quote: text('quote'), reason: 'malformed_finding', detail: `missing or invalid: ${missing.join(', ')}` },
+    };
+  }
 
   const confidence = Number(item['confidence']);
   const rawLine = Number(item['line']);

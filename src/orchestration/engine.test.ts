@@ -509,6 +509,23 @@ describe('engine — end to end with fake providers', () => {
     expect(verdict?.findings[0]?.outcome).toBe('reject');
   });
 
+  it('routes a review whose only lane output was malformed through Shredder completion, not the clean early exit', async () => {
+    deps = buildDeps({
+      ...realFindingScript('clean_review'),
+      'raph:INDEPENDENT_REVIEW': () => ({ findings: [{ category: 'regression', claim: 'no evidence given', file: 'src/import.ts' }] }),
+      'shredder:SPARRING': () => ({ result: 'OBJECT', note: 'a lane produced unusable output' }),
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const events = await store.listEvents(result.reviewId);
+    expect(events.find((e) => e.eventType === 'finding_withdrawn')?.metadata).toMatchObject({ reason: 'malformed_finding', persona: 'raph' });
+    expect(events.find((e) => e.phase === 'SPARRING' && e.actor === 'shredder')?.metadata).toMatchObject({ completion: 'OBJECT' });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
   it('records suppression for an incomplete verdict\'s publish decision even when its finding id does not exist', async () => {
     const script = realFindingScript('incomplete');
     deps = buildDeps({

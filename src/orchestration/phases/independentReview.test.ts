@@ -100,12 +100,18 @@ describe('runIndependentReview', () => {
     const provider = new ScriptedModelProvider({}, () => ({
       findings: [
         { category: 'regression', claim: 'missing evidence and consequence', file: 'src/a.ts' },
+        null,
         { category: 'regression', claim: 'valid one', evidence: 'proof', quote: 'const total = items.length;', consequence: 'breaks', file: 'src/a.ts', confidence: 0.5 },
       ],
     }));
     const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
     expect(outcomes[0]?.findings).toHaveLength(1);
     expect(outcomes[0]?.findings[0]?.claim).toBe('valid one');
+    // Discarded output is never invisible: each malformed item is a recorded drop.
+    expect(outcomes[0]?.dropped.map((d) => [d.reason, d.detail])).toEqual([
+      ['malformed_finding', 'missing or invalid: evidence, consequence'],
+      ['malformed_finding', 'missing or invalid: category, file, claim, evidence, consequence'],
+    ]);
   });
 
   it('lets Casey submit an observation with no root cause — root_cause is optional, not required', async () => {
