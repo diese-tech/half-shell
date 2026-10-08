@@ -233,10 +233,17 @@ export interface Verdict {
   reviewId: string;
   reviewer: 'leonardo';
   overallOutcome: OverallOutcome;
+  /** Leo's own words. Adjudication record only; never public for an incomplete review. */
   rationale: string;
   findings: VerdictFindingDecision[];
   unresolvedUncertainty: string[];
   createdAt: string;
+  /**
+   * Why the orchestrator forced this review incomplete (LEO_REVIEW's
+   * fail-safe), in orchestrator text. Not part of Leo's output contract
+   * (verdict.schema.json), so Leo can never set it.
+   */
+  coverageGap?: string;
 }
 
 export type GitHubReviewOutcome = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';

@@ -275,13 +275,16 @@ describe('engine — end to end with fake providers', () => {
 
     const verdict = await store.getVerdict(result.reviewId);
     expect(verdict?.overallOutcome).toBe('incomplete');
-    expect(verdict?.rationale).toContain('required independent-review lane failed');
+    expect(verdict?.coverageGap).toContain('required independent-review lane failed');
     const [finding] = await store.listFindings(result.reviewId);
     // Leo's decision survives as adjudication history; the effective publication does not.
     expect(verdict?.findings.find((d) => d.findingId === finding?.id)?.outcome).toBe('publish');
     expect(finding?.status).not.toBe('published');
     expect(github.state.reviews[0]?.event).toBe('COMMENT');
     expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
     const suppressed = (await store.listEvents(result.reviewId)).find((e) => e.findingId === finding?.id && e.metadata?.['publication'] === 'suppressed');
     expect(suppressed?.metadata).toMatchObject({ leoOutcome: 'publish', reason: 'review_incomplete' });
   });
@@ -358,6 +361,9 @@ describe('engine — end to end with fake providers', () => {
     expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
     expect(github.state.reviews[0]?.event).toBe('COMMENT');
     expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
   });
 
   it('forces the review incomplete on any quarantine, even when another verified blocking finding publishes', async () => {
@@ -385,6 +391,9 @@ describe('engine — end to end with fake providers', () => {
     expect(verified?.status).not.toBe('published');
     expect(findings.some((f) => f.status === 'published')).toBe(false);
     expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
     expect((await store.listEvents(result.reviewId)).some((e) => e.findingId === verified?.id && e.metadata?.['publication'] === 'suppressed')).toBe(true);
   });
 
@@ -410,7 +419,7 @@ describe('engine — end to end with fake providers', () => {
 
     const verdict = await store.getVerdict(result.reviewId);
     expect(verdict?.overallOutcome).toBe('incomplete');
-    expect(verdict?.rationale).toContain(why);
+    expect(verdict?.coverageGap).toContain(why);
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
@@ -421,6 +430,26 @@ describe('engine — end to end with fake providers', () => {
 
     expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  it.each([
+    ['CONCUR_CLEAN', 'clean_review'],
+    ['OBJECT', 'incomplete'],
+  ])('routes filtered findings through Shredder completion even when early exit would apply (%s)', async (shredderResult, outcome) => {
+    // realFindingScript's case file has no unknowns and every lane is clean, so
+    // canEarlyExit is true once the only finding is rejected by the verifier.
+    deps = buildDeps({
+      ...realFindingScript('clean_review'),
+      'shredder:SYNTHESIS': () => ({ verdict: 'CONTRADICTS', reason: 'the call site passes the tenant' }),
+      'shredder:SPARRING': () => ({ result: shredderResult, note: 'n' }),
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const completion = (await store.listEvents(result.reviewId)).find((e) => e.phase === 'SPARRING' && e.actor === 'shredder');
+    expect(completion?.metadata).toMatchObject({ completion: shredderResult });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe(outcome);
   });
 
   it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {

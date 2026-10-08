@@ -252,7 +252,7 @@ A failed or meaningfully incomplete review can never use clean-review language.
 
 When safe to publish, Half-Shell should clearly say the Dojo could not complete the round and that no clean verdict was issued. `@half-shell` retries the current PR state.
 
-An incomplete review publishes **no findings**, including ones Leo decided to publish. Leo's verdict is kept as the adjudication record, so "Leo would have published this" is never lost. Publication is a separate, effective state. A finding's persisted status may be `published` only if that finding was actually included in the GitHub review that Half-Shell posted for that review generation. It is never `published` for a suppressed incomplete review, for a run whose PR head moved before posting, or for any review that was never posted. Each suppressed publish decision is recorded as an event. The same rule applies to anything read later (Dojo, summaries, future consumers): it counts a finding as published only when that run's publication completed and the review was not incomplete, never from Leo's decision alone.
+An incomplete review publishes **no findings**, including ones Leo decided to publish. Its public body says the round was incomplete and gives the orchestrator's stated coverage gap. It never includes Leo's free-text rationale, because that rationale was written about findings this review suppresses. Leo's verdict is kept as the adjudication record, so "Leo would have published this" is never lost. Publication is a separate, effective state. A finding's persisted status may be `published` only if that finding was actually included in the GitHub review that Half-Shell posted for that review generation. It is never `published` for a suppressed incomplete review, for a run whose PR head moved before posting, or for any review that was never posted. Each suppressed publish decision is recorded as an event. The same rule applies to anything read later (Dojo, summaries, future consumers): it counts a finding as published only when that run's publication completed and the review was not incomplete, never from Leo's decision alone.
 
 ### Positive observations
 
@@ -748,7 +748,7 @@ Blocking findings, P0/P1 findings, inferred failure paths, weakly supported clai
 
 Shredder retains a finite code-enforced challenge budget and no veto authority.
 
-Zero surviving findings is not a clean review. Sometimes every finding is filtered or rejected before Sparring (Quote grounding, section 8) and the early exit does not apply, for example because the case file has open unknowns. Shredder must still complete a required adversarial step in that case. It receives the case file, its unknowns, and a summary of what was dropped and why, and answers `CONCUR_CLEAN`, `OBJECT`, or `INSUFFICIENT_COVERAGE`.
+Zero surviving findings is not a clean review. Sometimes findings are raised but every one is filtered, rejected, or quarantined before Sparring (Quote grounding, section 8). Sometimes nothing is raised but the early exit does not apply, for example because the case file has open unknowns. In either case Shredder must still complete a required adversarial step. Filtered findings always take this path, even when the early-exit conditions would otherwise hold. The early exit's clean-review confirmation is only for reviews whose lanes genuinely raised nothing. It receives the case file, its unknowns, and a summary of what was dropped and why, and answers `CONCUR_CLEAN`, `OBJECT`, or `INSUFFICIENT_COVERAGE`.
 
 A clean verdict requires all of the following:
 

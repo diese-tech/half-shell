@@ -292,11 +292,12 @@ export const COMPLETION_RESULTS = ['CONCUR_CLEAN', 'OBJECT', 'INSUFFICIENT_COVER
 export type CompletionResult = (typeof COMPLETION_RESULTS)[number];
 
 const ZERO_SURVIVORS_INSTRUCTION = [
-  'Phase: SPARRING — required completion. Findings were raised, but every one',
-  'was filtered or rejected before Sparring (ungrounded, wrong file, or',
-  'refuted by its own cited code), so nothing reached you to challenge. Zero',
-  'surviving findings is NOT the same as a clean review. You have the case',
-  'file, its open unknowns, and a summary of what was dropped and why. Decide:',
+  'Phase: SPARRING — required completion. Nothing reached you to challenge:',
+  'every finding raised was filtered or rejected before Sparring (ungrounded,',
+  'wrong file, refuted by its own cited code, or quarantined; counted in',
+  'droppedBeforeSparring), or none was raised while the case file still has',
+  'open unknowns. Zero surviving findings is NOT the same as a clean review.',
+  'You have the case file, its open unknowns, and what was dropped and why. Decide:',
   '',
   '- CONCUR_CLEAN: the case file gives no reason to think a material defect',
   '  was missed, and no unknown blocks judging merge-readiness.',

@@ -69,6 +69,10 @@ export function renderReviewBody(verdict: Verdict): string {
     lines.push(
       'The Dojo could not complete this round with the required coverage. No clean verdict is issued — `@half-shell` to retry.',
     );
+    // Only orchestrator text: Leo's rationale was written about findings this
+    // review suppresses, so it could restate a defect that must not publish.
+    if (verdict.coverageGap) lines.push('', verdict.coverageGap);
+    return lines.join('\n');
   } else if (published.length === 0) {
     lines.push('The Dojo found nothing that met the publication standard. Shell clear.');
   } else {

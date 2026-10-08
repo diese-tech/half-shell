@@ -182,7 +182,9 @@ function renderVerdict(verdict: Verdict | null, publication: PublicationState): 
   const uncertainty = verdict.unresolvedUncertainty.length
     ? `<div class="small"><em>Unresolved uncertainty:</em><ul>${verdict.unresolvedUncertainty.map((u) => `<li>${escapeHtml(u)}</li>`).join('')}</ul></div>`
     : '';
-  return `<div class="actor-leo finding">${verdictCell(summarizeVerdict(verdict, publication))}<div class="content">${escapeHtml(verdict.rationale)}</div>${uncertainty}<div class="small muted">${time(verdict.createdAt)}</div></div>`;
+  // Leo's rationale is the adjudication record (operator view); the coverage gap is the orchestrator's.
+  const gap = verdict.coverageGap ? `<div class="small"><em>Coverage gap (orchestrator):</em> ${escapeHtml(verdict.coverageGap)}</div>` : '';
+  return `<div class="actor-leo finding">${verdictCell(summarizeVerdict(verdict, publication))}<div class="content">${escapeHtml(verdict.rationale)}</div>${gap}${uncertainty}<div class="small muted">${time(verdict.createdAt)}</div></div>`;
 }
 
 function renderPublication(p: PublicationState): string {

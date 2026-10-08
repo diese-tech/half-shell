@@ -315,19 +315,21 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
         noGuardrailOrHistoryTrigger: !(await store.listEvents(current.id)).some((e) => e.eventType === 'lesson_added'),
       });
 
-      if (!early && survivors.length === 0) {
-        // Every finding was filtered before Sparring, but early exit didn't
-        // apply (e.g. open unknowns). Zero survivors is not clean: Shredder
-        // still owes a required adversarial step, on the case file and what
-        // was dropped (phases/sparring.ts completeWithoutSurvivors).
-        const events = await store.listEvents(current.id);
-        const dropped: Record<string, number> = {};
-        for (const e of events) {
-          const reason = e.metadata?.['reason'];
-          if ((e.eventType === 'finding_withdrawn' || e.eventType === 'finding_updated') && typeof reason === 'string') {
-            dropped[reason] = (dropped[reason] ?? 0) + 1;
-          }
+      // Findings raised but filtered, rejected, or quarantined before Sparring, by reason.
+      const dropped: Record<string, number> = {};
+      for (const e of await store.listEvents(current.id)) {
+        const reason = e.metadata?.['reason'];
+        if ((e.eventType === 'finding_withdrawn' || e.eventType === 'finding_updated') && typeof reason === 'string') {
+          dropped[reason] = (dropped[reason] ?? 0) + 1;
         }
+      }
+
+      // Early exit (confirmCleanReview) is only for reviews whose lanes
+      // genuinely raised nothing. Zero survivors because findings were
+      // filtered is not that, and not clean either: Shredder owes a required
+      // adversarial step on the case file and what was dropped
+      // (phases/sparring.ts completeWithoutSurvivors), early exit or not.
+      if (survivors.length === 0 && (!early || Object.keys(dropped).length > 0)) {
         const completion = await completeWithoutSurvivors(
           deps.providerFor('shredder'),
           persona(deps, 'shredder'),
@@ -479,10 +481,12 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
               : shredderRaisedUnresolvedObjection
                 ? 'Shredder objected to treating this as a clean review'
                 : 'Shredder — a required role in every review — never completed';
+        // Leo's rationale stays Leo's adjudication record, untouched; the gap
+        // is stated separately, in orchestrator words, for publication.
         verdict = {
           ...verdict,
           overallOutcome: 'incomplete',
-          rationale: `${verdict.rationale} Required coverage was incomplete — ${reason} — so this cannot be published as a clean verdict.`,
+          coverageGap: `Required coverage was incomplete: ${reason}, so this cannot be published as a clean verdict.`,
         };
       }
 
