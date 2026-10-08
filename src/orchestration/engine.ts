@@ -471,22 +471,29 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
       const verifierQuarantined = (await store.listFindings(current.id)).some((f) => f.status === 'quarantined');
       const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
       const requiredCoverageMissing = requiredLaneFailed || shredderRequiredRoleMissing || shredderRaisedUnresolvedObjection;
-      if (verdict.overallOutcome !== 'incomplete' && (verifierQuarantined || (requiredCoverageMissing && !anyBlockingPublished))) {
-        const reason = verifierQuarantined
-          ? 'a finding was quarantined because its verification gave no valid verdict'
-          : requiredLaneFailed
-            ? 'a required independent-review lane failed'
-            : insufficientCoverage
-              ? 'Shredder judged the remaining coverage insufficient to call this clean'
-              : shredderRaisedUnresolvedObjection
-                ? 'Shredder objected to treating this as a clean review'
-                : 'Shredder — a required role in every review — never completed';
+      const reason = verifierQuarantined
+        ? 'a finding was quarantined because its verification gave no valid verdict'
+        : requiredLaneFailed
+          ? 'a required independent-review lane failed'
+          : insufficientCoverage
+            ? 'Shredder judged the remaining coverage insufficient to call this clean'
+            : shredderRaisedUnresolvedObjection
+              ? 'Shredder objected to treating this as a clean review'
+              : shredderRequiredRoleMissing
+                ? 'Shredder — a required role in every review — never completed'
+                : undefined;
+      const forced = verdict.overallOutcome !== 'incomplete' && (verifierQuarantined || (requiredCoverageMissing && !anyBlockingPublished));
+      if (forced || verdict.overallOutcome === 'incomplete') {
         // Leo's rationale stays Leo's adjudication record, untouched; the gap
-        // is stated separately, in orchestrator words, for publication.
+        // is stated separately, in orchestrator words, for publication —
+        // also when Leo itself returned incomplete, so the public body
+        // always says why without ever echoing Leo's text.
         verdict = {
           ...verdict,
           overallOutcome: 'incomplete',
-          coverageGap: `Required coverage was incomplete: ${reason}, so this cannot be published as a clean verdict.`,
+          coverageGap: reason
+            ? `Required coverage was incomplete: ${reason}, so this cannot be published as a clean verdict.`
+            : 'Leonardo could not reach a verdict with the evidence and coverage available, so this cannot be published as a clean verdict.',
         };
       }
 

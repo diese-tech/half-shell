@@ -432,6 +432,20 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
+  it('explains an incomplete verdict Leo returned itself, in orchestrator words only', async () => {
+    deps = buildDeps(realFindingScript('incomplete'));
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.rationale).toBe('The stale call site fails on every import.');
+    const body = github.state.reviews[0]?.body ?? '';
+    expect(body).toContain('Leonardo could not reach a verdict');
+    expect(body).not.toContain('The stale call site fails on every import.');
+    expect(body).not.toContain('importRecords still calls load()');
+  });
+
   it.each([
     ['CONCUR_CLEAN', 'clean_review'],
     ['OBJECT', 'incomplete'],
