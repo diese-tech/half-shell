@@ -172,13 +172,14 @@ export async function publish(
   // finding's status claiming something GitHub never received.
   const published = new Set(effectivelyPublished(verdict).map((d) => d.findingId));
   for (const decision of verdict.findings.filter((d) => d.outcome === 'publish')) {
-    const finding = await store.getFinding(decision.findingId);
-    if (!finding) continue;
-    if (published.has(decision.findingId)) {
-      await store.saveFinding({ ...finding, status: 'published' });
-    } else {
+    // The audit record doesn't depend on the finding existing (a stale or
+    // hallucinated id is still a suppressed decision), the same as the stale-head path.
+    if (!published.has(decision.findingId)) {
       await recordSuppressed(store, run, decision, 'review_incomplete', `the review is ${verdict.overallOutcome}`);
+      continue;
     }
+    const finding = await store.getFinding(decision.findingId);
+    if (finding) await store.saveFinding({ ...finding, status: 'published' });
   }
 
   await recordEvent(store, {

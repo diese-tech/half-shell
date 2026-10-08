@@ -432,6 +432,23 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
+  it('records suppression for an incomplete verdict\'s publish decision even when its finding id does not exist', async () => {
+    const script = realFindingScript('incomplete');
+    deps = buildDeps({
+      ...script,
+      'leo:LEO_REVIEW': (request) => {
+        const real = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...real, findings: [...real.findings, { ...real.findings[0], finding_id: 'finding_hallucinated' }] };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const suppressed = (await store.listEvents(result.reviewId)).filter((e) => e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed.map((e) => e.findingId)).toContain('finding_hallucinated');
+    expect(suppressed).toHaveLength(2);
+  });
+
   it('explains an incomplete verdict Leo returned itself, in orchestrator words only', async () => {
     deps = buildDeps(realFindingScript('incomplete'));
 
