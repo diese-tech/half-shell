@@ -432,6 +432,52 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
   });
 
+  const FABRICATED_BLOCKER = {
+    finding_id: 'finding_fabricated',
+    outcome: 'publish',
+    final_severity: 'critical',
+    public_reason: 'A fabricated defect that was never raised.',
+    blocking: true,
+    blocking_reason: 'made up',
+  };
+
+  it.each([
+    ['OBJECT', { result: 'OBJECT', note: 'something was missed' }],
+    ['an invalid completion', { concurs: true }],
+  ])('a fabricated blocking decision never outweighs a zero-survivor completion of %s', async (_label, shredderSays) => {
+    deps = buildDeps({
+      ...zeroSurvivorScript(shredderSays),
+      'leo:LEO_REVIEW': () => ({ overall_outcome: 'blocking_findings_published', rationale: 'r', findings: [FABRICATED_BLOCKER], unresolved_uncertainty: [] }),
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('A fabricated defect');
+  });
+
+  it('forces incomplete when Leo rules on a finding it was never given, even beside a real blocking finding', async () => {
+    const script = realFindingScript('blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'leo:LEO_REVIEW': (request) => {
+        const real = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...real, findings: [...real.findings, FABRICATED_BLOCKER] };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.coverageGap).toContain('never given');
+    expect(verdict?.findings.map((d) => d.findingId)).toContain('finding_fabricated');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('A fabricated defect');
+    expect((await store.listFindings(result.reviewId)).some((f) => f.status === 'published')).toBe(false);
+  });
+
   it('records suppression for an incomplete verdict\'s publish decision even when its finding id does not exist', async () => {
     const script = realFindingScript('incomplete');
     deps = buildDeps({

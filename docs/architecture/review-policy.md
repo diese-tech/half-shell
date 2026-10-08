@@ -755,9 +755,10 @@ A clean verdict requires all of the following:
 - every mandatory Council role completed, Shredder's step included;
 - Shredder concurred (`CONCUR_CLEAN`);
 - no material coverage gap remains;
-- no finding was quarantined by a verifier failure.
+- no finding was quarantined by a verifier failure;
+- Leo ruled only on findings it was actually given. A decision about any other finding is fabricated and forces `incomplete`.
 
-Anything else, including an invalid or failed Shredder response, makes the review `incomplete`.
+Anything else, including an invalid or failed Shredder response, makes the review `incomplete`. A completion that did not concur is never outweighed by a blocking publish decision.
 
 ### Leonardo remand
 

@@ -469,11 +469,23 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
       // this review is trustworthy as clean, and no verdict here may stand in
       // for it — forced incomplete even if other findings published.
       const verifierQuarantined = (await store.listFindings(current.id)).some((f) => f.status === 'quarantined');
+      // Leo may only decide on the findings it was handed. A decision about
+      // any other id (the schema accepts any string) is fabricated, so the
+      // verdict can't be trusted to publish anything; Leo's record is kept.
+      const survivingIds = new Set(surviving.map((f) => f.id));
+      const decidedOnUnknownFinding = verdict.findings.some((d) => !survivingIds.has(d.findingId));
+      // A zero-survivor completion that didn't concur is never outweighed by
+      // a blocking decision — with nothing surviving, any such decision is fabricated.
+      const completionDidNotConcur = sparringEvents.some(
+        (e) => e.actor === 'shredder' && typeof e.metadata?.['completion'] === 'string' && e.metadata['completion'] !== 'CONCUR_CLEAN',
+      );
       const anyBlockingPublished = verdict.findings.some((f) => f.outcome === 'publish' && f.blocking);
       const requiredCoverageMissing = requiredLaneFailed || shredderRequiredRoleMissing || shredderRaisedUnresolvedObjection;
       const reason = verifierQuarantined
         ? 'a finding was quarantined because its verification gave no valid verdict'
-        : requiredLaneFailed
+        : decidedOnUnknownFinding
+          ? 'Leonardo ruled on a finding it was never given'
+          : requiredLaneFailed
           ? 'a required independent-review lane failed'
           : insufficientCoverage
             ? 'Shredder judged the remaining coverage insufficient to call this clean'
@@ -482,7 +494,9 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
               : shredderRequiredRoleMissing
                 ? 'Shredder — a required role in every review — never completed'
                 : undefined;
-      const forced = verdict.overallOutcome !== 'incomplete' && (verifierQuarantined || (requiredCoverageMissing && !anyBlockingPublished));
+      const forced =
+        verdict.overallOutcome !== 'incomplete' &&
+        (verifierQuarantined || decidedOnUnknownFinding || completionDidNotConcur || (requiredCoverageMissing && !anyBlockingPublished));
       if (forced || verdict.overallOutcome === 'incomplete') {
         // Leo's rationale stays Leo's adjudication record, untouched; the gap
         // is stated separately, in orchestrator words, for publication —
