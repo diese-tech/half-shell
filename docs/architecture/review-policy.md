@@ -252,6 +252,8 @@ A failed or meaningfully incomplete review can never use clean-review language.
 
 When safe to publish, Half-Shell should clearly say the Dojo could not complete the round and that no clean verdict was issued. `@half-shell` retries the current PR state.
 
+An incomplete review publishes **no findings**, including ones Leo decided to publish. Its public body says the round was incomplete and gives the orchestrator's stated coverage gap. It never includes Leo's free-text rationale, because that rationale was written about findings this review suppresses. Leo's verdict is kept as the adjudication record, so "Leo would have published this" is never lost. Publication is a separate, effective state. A finding's persisted status may be `published` only if that finding was actually included in the GitHub review that Half-Shell posted for that review generation. It is never `published` for a suppressed incomplete review, for a run whose PR head moved before posting, or for any review that was never posted. Each suppressed publish decision is recorded as an event. The same rule applies to anything read later (Dojo, summaries, future consumers): it counts a finding as published only when that run's publication completed and the review was not incomplete, never from Leo's decision alone.
+
 ### Positive observations
 
 Half-Shell may surface one concise, evidence-backed positive observation in the overall review when something genuinely stands out.
@@ -433,7 +435,7 @@ Every independent-review finding must quote, verbatim, a line from the changed f
 - **Ungrounded quote:** the quote is missing, too short to identify a line, or not in any changed file.
 - **Provenance mismatch:** the quote comes from a different file than the one claimed, the claimed file is not a changed file in the review, or the finding names a line and the quote's head-side line is not within a few lines of it.
 
-Each drop is recorded as an event that carries its reason. The PR description and related-context files never count as sources, because no finding may be claimed against them. If the changed-files section of the rendered context cannot be parsed, nothing is grounded: the check fails closed and never falls back to the full prompt. This is a floor, not proof. A grounded claim can still be wrong, so the quoted line goes into its evidence.
+A lane item missing required fields (category, file, claim, evidence, consequence) is dropped as a **malformed finding**. Discarded model output is never invisible. Each drop is recorded as an event that carries its reason. The PR description and related-context files never count as sources, because no finding may be claimed against them. If the changed-files section of the rendered context cannot be parsed, nothing is grounded: the check fails closed and never falls back to the full prompt. This is a floor, not proof. A grounded claim can still be wrong, so the quoted line goes into its evidence.
 
 At the end of Synthesis, before Sparring and Leo, each surviving candidate gets one bounded semantic check. Shredder sees only four things: the claim, the claimed file, the grounded quote, and a few lines of that file around the quote. It never sees the whole PR and never does an open-ended review. It answers whether the cited code makes the claimed harm happen:
 
@@ -441,7 +443,7 @@ At the end of Synthesis, before Sparring and Leo, each surviving candidate gets 
 - `CONTRADICTS`: the code prevents or handles the harm, or the text states the behaviour is intentional and bounds the risk. The finding is rejected as a semantic contradiction.
 - `INSUFFICIENT`: the code neither makes the harm happen nor prevents it. The finding is rejected for insufficient evidence.
 
-Every outcome is recorded with its reason. If the verifier gives no valid verdict (the call errors, or the answer is outside the three), the finding stays, marked unverified. A provider failure must never turn a real defect into a clean review.
+Every outcome is recorded with its reason. If the verifier gives no valid verdict (the call errors, or the answer is outside the three), the finding is **quarantined**. It is never published, and the whole review is forced to `incomplete`, even if other, verified findings would publish. An unavailable verifier must never produce a clean review, and must never let a finding publish as though it were verified.
 
 ### Secret handling
 
@@ -745,6 +747,18 @@ Shredder participates in every review, but adversarial effort is proportional to
 Blocking findings, P0/P1 findings, inferred failure paths, weakly supported claims, acceptance-criterion blockers, and unusually consequential claims receive stronger challenge.
 
 Shredder retains a finite code-enforced challenge budget and no veto authority.
+
+Zero surviving findings is not a clean review. Sometimes findings are raised but every one is filtered, rejected, or quarantined before Sparring (Quote grounding, section 8). Sometimes nothing is raised but the early exit does not apply, for example because the case file has open unknowns. In either case Shredder must still complete a required adversarial step. Filtered findings always take this path, even when the early-exit conditions would otherwise hold. The early exit's clean-review confirmation is only for reviews whose lanes genuinely raised nothing. It receives the case file, its unknowns, and a summary of what was dropped and why, and answers `CONCUR_CLEAN`, `OBJECT`, or `INSUFFICIENT_COVERAGE`.
+
+A clean verdict requires all of the following:
+
+- every mandatory Council role completed, Shredder's step included;
+- Shredder concurred (`CONCUR_CLEAN`);
+- no material coverage gap remains;
+- no finding was quarantined by a verifier failure;
+- Leo ruled only on findings it was actually given. A decision about any other finding is fabricated and forces `incomplete`.
+
+Anything else, including an invalid or failed Shredder response, makes the review `incomplete`. A completion that did not concur is never outweighed by a blocking publish decision.
 
 ### Leonardo remand
 

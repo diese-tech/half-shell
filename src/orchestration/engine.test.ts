@@ -232,6 +232,63 @@ describe('engine — end to end with fake providers', () => {
     expect(findings.some((f) => f.status === 'published')).toBe(true);
   });
 
+  it('persists a finding as published when a complete review actually publishes it', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).toBe('published');
+    expect(github.state.reviews[0]?.body).toContain('importRecords still calls load()');
+    const decision = (await store.getVerdict(result.reviewId))?.findings.find((d) => d.findingId === finding?.id);
+    expect(decision?.outcome).toBe('publish');
+  });
+
+  it('never persists published when the PR head moved and nothing was posted', async () => {
+    deps = buildDeps(realFindingScript('blocking_findings_published'));
+    github.state.headSha = 'moved-on';
+
+    const result = await ingest(deps, baseInput());
+
+    expect(github.state.reviews).toHaveLength(0);
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).not.toBe('published');
+    // Each of Leo's publish decisions is recorded as suppressed, not just the run-level supersession.
+    const suppressed = (await store.listEvents(result.reviewId)).filter((e) => e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed.map((e) => [e.findingId, e.metadata?.['reason']])).toEqual([[finding?.id, 'stale_head']]);
+  });
+
+  it('keeps persisted state consistent with GitHub when a coverage gap (no quarantine) forces incomplete', async () => {
+    const script = realFindingScript('non_blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'donnie:INDEPENDENT_REVIEW': () => {
+        throw new Error('lane provider down');
+      },
+      'leo:LEO_REVIEW': (request) => {
+        const decision = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...decision, findings: decision.findings.map((f) => ({ ...f, blocking: false, blocking_reason: null })) };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.coverageGap).toContain('required independent-review lane failed');
+    const [finding] = await store.listFindings(result.reviewId);
+    // Leo's decision survives as adjudication history; the effective publication does not.
+    expect(verdict?.findings.find((d) => d.findingId === finding?.id)?.outcome).toBe('publish');
+    expect(finding?.status).not.toBe('published');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
+    const suppressed = (await store.listEvents(result.reviewId)).find((e) => e.findingId === finding?.id && e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed?.metadata).toMatchObject({ leoOutcome: 'publish', reason: 'review_incomplete' });
+  });
+
   it('records each provenance drop as an event with its reason, and never makes it a candidate', async () => {
     const script = realFindingScript('blocking_findings_published');
     deps = buildDeps({
@@ -268,16 +325,256 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.event).not.toBe('REQUEST_CHANGES');
   });
 
-  it('keeps a finding unverified, never silently dropped, when the verifier gives no verdict', async () => {
-    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => 'not json at all' });
+  /** A case file with an open unknown, so a review left with zero survivors cannot take the early exit. */
+  const OPEN_CASE_FILE = () => ({
+    facts: [{ statement: 'load() gained a required tenantId parameter' }],
+    sources: [{ kind: 'diff', reference: 'src/import.ts' }],
+    relevance: ['the contract change'],
+    inferences: [],
+    unknowns: [{ question: 'whether legacy callers still pass only an id' }],
+    stated_intent: 'scope loading to a tenant',
+    unresolved_context: [],
+  });
+  const CLEAN_LEO = () => ({ overall_outcome: 'clean_review', rationale: 'nothing survived', findings: [], unresolved_uncertainty: [] });
+
+  function zeroSurvivorScript(shredderSays: object): Partial<Record<string, ScriptedResponder>> {
+    return {
+      ...realFindingScript('clean_review'),
+      'april:CASE_FILE': OPEN_CASE_FILE,
+      'shredder:SYNTHESIS': () => ({ verdict: 'CONTRADICTS', reason: 'the call site passes the tenant' }),
+      'shredder:SPARRING': () => shredderSays,
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    };
+  }
+
+  it('quarantines a finding whose verifier gives no valid verdict: never published, review incomplete', async () => {
+    // Leo never sees the quarantined finding, so from where Leo sits nothing survived.
+    deps = buildDeps({ ...realFindingScript('blocking_findings_published'), 'shredder:SYNTHESIS': () => 'not json at all', 'leo:LEO_REVIEW': CLEAN_LEO });
 
     const result = await ingest(deps, baseInput());
 
     const [finding] = await store.listFindings(result.reviewId);
-    expect(finding?.status).toBe('published');
+    expect(finding?.status).toBe('quarantined');
     const events = await store.listEvents(result.reviewId);
-    expect(events.find((e) => e.eventType === 'finding_updated' && e.findingId === finding?.id)?.metadata).toMatchObject({ verification: 'unavailable' });
-    expect(github.state.reviews[0]?.event).toBe('REQUEST_CHANGES');
+    expect(events.find((e) => e.eventType === 'finding_updated' && e.findingId === finding?.id)?.metadata).toMatchObject({ verification: 'unavailable', reason: 'verifier_unavailable' });
+    expect(events.some((e) => e.phase === 'SPARRING' && e.findingId === finding?.id)).toBe(false);
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
+  });
+
+  it('forces the review incomplete on any quarantine, even when another verified blocking finding publishes', async () => {
+    const script = realFindingScript('blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'donnie:INDEPENDENT_REVIEW': () => ({
+        findings: [{ category: 'contract', claim: 'second claim on the same call', evidence: 'e', quote: 'return ids.map((id) => load(id));', file: 'src/import.ts', line: 12, consequence: 'c', confidence: 0.8 }],
+      }),
+      'shredder:SYNTHESIS': (request) => (request.userPrompt.includes('second claim') ? 'garbage' : { verdict: 'SUPPORTS', reason: 'only id is passed' }),
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const findings = await store.listFindings(result.reviewId);
+    expect(findings.map((f) => f.status).sort()).toContain('quarantined');
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+
+    // The verified finding Leo chose to publish: Leo's decision is kept, but
+    // GitHub received no finding, so persisted state must not claim one.
+    const verified = findings.find((f) => f.status !== 'quarantined');
+    expect(verdict?.findings.find((d) => d.findingId === verified?.id)?.outcome).toBe('publish');
+    expect(verified?.status).not.toBe('published');
+    expect(findings.some((f) => f.status === 'published')).toBe(false);
+    expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
+    // Leo's rationale describes the suppressed finding; an incomplete review publishes only the coverage gap.
+    expect(github.state.reviews[0]?.body).not.toContain("Leo's verdict");
+    expect(github.state.reviews[0]?.body).toContain('Required coverage was incomplete');
+    expect((await store.listEvents(result.reviewId)).some((e) => e.findingId === verified?.id && e.metadata?.['publication'] === 'suppressed')).toBe(true);
+  });
+
+  it('with zero survivors, a clean verdict still requires Shredder to CONCUR_CLEAN on the case file', async () => {
+    deps = buildDeps(zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'the unknown does not block merge-readiness' }));
+
+    const result = await ingest(deps, baseInput());
+
+    const completion = (await store.listEvents(result.reviewId)).find((e) => e.phase === 'SPARRING' && e.actor === 'shredder');
+    expect(completion).toMatchObject({ eventType: 'challenge_accepted', metadata: { completion: 'CONCUR_CLEAN' } });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('clean_review');
+    expect(github.state.reviews[0]?.body).toContain('Shell clear');
+  });
+
+  it.each([
+    ['OBJECT', { result: 'OBJECT', note: 'the legacy caller path was never examined' }, 'objected'],
+    ['INSUFFICIENT_COVERAGE', { result: 'INSUFFICIENT_COVERAGE', note: 'too much was dropped' }, 'coverage insufficient'],
+    ['an invalid answer', { concurs: true }, 'never completed'],
+  ])('with zero survivors, %s from Shredder makes the review incomplete, never clean', async (_label, shredderSays, why) => {
+    deps = buildDeps(zeroSurvivorScript(shredderSays));
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.coverageGap).toContain(why);
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  it('with zero survivors, CONCUR_CLEAN still cannot make a review with a quarantined finding clean', async () => {
+    deps = buildDeps({ ...zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'fine' }), 'shredder:SYNTHESIS': () => 'garbage' });
+
+    const result = await ingest(deps, baseInput());
+
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  const FABRICATED_BLOCKER = {
+    finding_id: 'finding_fabricated',
+    outcome: 'publish',
+    final_severity: 'critical',
+    public_reason: 'A fabricated defect that was never raised.',
+    blocking: true,
+    blocking_reason: 'made up',
+  };
+
+  it.each([
+    ['OBJECT', { result: 'OBJECT', note: 'something was missed' }],
+    ['an invalid completion', { concurs: true }],
+  ])('a fabricated blocking decision never outweighs a zero-survivor completion of %s', async (_label, shredderSays) => {
+    deps = buildDeps({
+      ...zeroSurvivorScript(shredderSays),
+      'leo:LEO_REVIEW': () => ({ overall_outcome: 'blocking_findings_published', rationale: 'r', findings: [FABRICATED_BLOCKER], unresolved_uncertainty: [] }),
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('A fabricated defect');
+  });
+
+  it('forces incomplete when Leo rules on a finding it was never given, even beside a real blocking finding', async () => {
+    const script = realFindingScript('blocking_findings_published');
+    deps = buildDeps({
+      ...script,
+      'leo:LEO_REVIEW': (request) => {
+        const real = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...real, findings: [...real.findings, FABRICATED_BLOCKER] };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.coverageGap).toContain('never given');
+    expect(verdict?.findings.map((d) => d.findingId)).toContain('finding_fabricated');
+    expect(github.state.reviews[0]?.event).toBe('COMMENT');
+    expect(github.state.reviews[0]?.body).not.toContain('A fabricated defect');
+    expect((await store.listFindings(result.reviewId)).some((f) => f.status === 'published')).toBe(false);
+  });
+
+  it('never lets a decision on a finding Leo was not given overwrite that finding\'s quarantine', async () => {
+    let quarantinedId: string | undefined;
+    deps = buildDeps({
+      ...zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'n' }),
+      'shredder:SYNTHESIS': () => 'garbage',
+      'leo:LEO_REVIEW': () => ({
+        overall_outcome: 'clean_review',
+        rationale: 'r',
+        findings: [{ finding_id: quarantinedId, outcome: 'reject', final_severity: 'low', public_reason: 'not real', blocking: false, blocking_reason: null }],
+        unresolved_uncertainty: [],
+      }),
+    });
+    // Leo learns a real (quarantined) id it was never handed — the fabricated-decision case.
+    const realStore = deps.store;
+    const original = realStore.saveFinding.bind(realStore);
+    realStore.saveFinding = async (f) => {
+      if (f.status === 'quarantined') quarantinedId = f.id;
+      return original(f);
+    };
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.id).toBe(quarantinedId);
+    expect(finding?.status).toBe('quarantined');
+    expect(finding?.severity).toBeNull();
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.findings[0]?.outcome).toBe('reject');
+  });
+
+  it('routes a review whose only lane output was malformed through Shredder completion, not the clean early exit', async () => {
+    deps = buildDeps({
+      ...realFindingScript('clean_review'),
+      'raph:INDEPENDENT_REVIEW': () => ({ findings: [{ category: 'regression', claim: 'no evidence given', file: 'src/import.ts' }] }),
+      'shredder:SPARRING': () => ({ result: 'OBJECT', note: 'a lane produced unusable output' }),
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const events = await store.listEvents(result.reviewId);
+    expect(events.find((e) => e.eventType === 'finding_withdrawn')?.metadata).toMatchObject({ reason: 'malformed_finding', persona: 'raph' });
+    expect(events.find((e) => e.phase === 'SPARRING' && e.actor === 'shredder')?.metadata).toMatchObject({ completion: 'OBJECT' });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe('incomplete');
+    expect(github.state.reviews[0]?.body).not.toContain('Shell clear');
+  });
+
+  it('records suppression for an incomplete verdict\'s publish decision even when its finding id does not exist', async () => {
+    const script = realFindingScript('incomplete');
+    deps = buildDeps({
+      ...script,
+      'leo:LEO_REVIEW': (request) => {
+        const real = (script['leo:LEO_REVIEW'] as ScriptedResponder)(request) as { findings: Record<string, unknown>[] };
+        return { ...real, findings: [...real.findings, { ...real.findings[0], finding_id: 'finding_hallucinated' }] };
+      },
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const suppressed = (await store.listEvents(result.reviewId)).filter((e) => e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed.map((e) => e.findingId)).toContain('finding_hallucinated');
+    expect(suppressed).toHaveLength(2);
+  });
+
+  it('explains an incomplete verdict Leo returned itself, in orchestrator words only', async () => {
+    deps = buildDeps(realFindingScript('incomplete'));
+
+    const result = await ingest(deps, baseInput());
+
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.rationale).toBe('The stale call site fails on every import.');
+    const body = github.state.reviews[0]?.body ?? '';
+    expect(body).toContain('Leonardo could not reach a verdict');
+    expect(body).not.toContain('The stale call site fails on every import.');
+    expect(body).not.toContain('importRecords still calls load()');
+  });
+
+  it.each([
+    ['CONCUR_CLEAN', 'clean_review'],
+    ['OBJECT', 'incomplete'],
+  ])('routes filtered findings through Shredder completion even when early exit would apply (%s)', async (shredderResult, outcome) => {
+    // realFindingScript's case file has no unknowns and every lane is clean, so
+    // canEarlyExit is true once the only finding is rejected by the verifier.
+    deps = buildDeps({
+      ...realFindingScript('clean_review'),
+      'shredder:SYNTHESIS': () => ({ verdict: 'CONTRADICTS', reason: 'the call site passes the tenant' }),
+      'shredder:SPARRING': () => ({ result: shredderResult, note: 'n' }),
+      'leo:LEO_REVIEW': CLEAN_LEO,
+    });
+
+    const result = await ingest(deps, baseInput());
+
+    const completion = (await store.listEvents(result.reviewId)).find((e) => e.phase === 'SPARRING' && e.actor === 'shredder');
+    expect(completion?.metadata).toMatchObject({ completion: shredderResult });
+    expect((await store.getVerdict(result.reviewId))?.overallOutcome).toBe(outcome);
   });
 
   it('derives the verdict label from Leo\'s decisions when Leo mislabels it', async () => {

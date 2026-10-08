@@ -126,20 +126,45 @@ describe('Dojo read model', () => {
   });
 
   it('summarizes runs with short SHA, activity, and verdict counts', async () => {
-    await writer.saveReviewRun(run());
+    await writer.saveReviewRun(run({ status: 'archived', currentPhase: 'ARCHIVED' }));
     await writer.saveVerdict(verdict());
+    await writer.appendEvent({ id: 'evt_pub', reviewId: 'rev_1', phase: 'PUBLICATION', actor: 'orchestrator', eventType: 'github_publication_completed', findingId: null, content: null, metadata: { reviewId: 99, githubReviewOutcome: 'REQUEST_CHANGES' }, createdAt: 't9' });
     const [summary] = await listRunSummaries(reader, 10);
     expect(summary).toMatchObject({
       id: 'rev_1',
       repository: 'diese-tech/half-shell',
       pullRequestNumber: 12,
       shortHeadSha: 'abcdef1',
-      phase: 'SPARRING',
-      status: 'running',
-      active: true,
+      phase: 'ARCHIVED',
+      status: 'archived',
+      active: false,
       verdict: { overallOutcome: 'blocking_findings_published', blocking: 1, nonBlocking: 1, notPublished: 1 },
     });
-    expect(summarizeVerdict(undefined)).toBeNull();
+    expect(summarizeVerdict(undefined, publicationState(run(), []))).toBeNull();
+  });
+
+  it('reports zero published findings for an incomplete review, whatever Leo would have published', () => {
+    const posted = publicationState(run({ status: 'archived' }), [event({ eventType: 'github_publication_completed', metadata: { reviewId: 99, githubReviewOutcome: 'COMMENT' } })]);
+    expect(summarizeVerdict(verdict({ overallOutcome: 'incomplete' }), posted)).toEqual({
+      overallOutcome: 'incomplete',
+      blocking: 0,
+      nonBlocking: 0,
+      notPublished: 3,
+    });
+  });
+
+  it('reports zero published findings when GitHub received nothing: superseded, failed, or not yet posted', async () => {
+    const superseded = publicationState(run({ status: 'superseded' }), [event({ eventType: 'run_superseded', content: 'head moved' })]);
+    for (const publication of [superseded, publicationState(run({ status: 'failed_retryable' }), []), publicationState(run(), [])]) {
+      expect(summarizeVerdict(verdict(), publication)).toMatchObject({ blocking: 0, nonBlocking: 0, notPublished: 3 });
+    }
+
+    await writer.saveReviewRun(run({ status: 'superseded' }));
+    await writer.saveVerdict(verdict());
+    await writer.appendEvent({ id: 'evt_sup', reviewId: 'rev_1', phase: 'PUBLICATION', actor: 'orchestrator', eventType: 'run_superseded', findingId: null, content: 'head moved', metadata: null, createdAt: 't9' });
+    const [summary] = await listRunSummaries(reader, 10);
+    expect(summary?.verdict).toMatchObject({ blocking: 0, nonBlocking: 0, notPublished: 3 });
+    expect((await getRunDetail(reader, 'rev_1'))?.summary.verdict).toMatchObject({ blocking: 0, nonBlocking: 0 });
   });
 
   it('builds run detail with events in sequence order', async () => {

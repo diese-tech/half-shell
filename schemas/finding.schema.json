@@ -69,7 +69,8 @@
         "withdrawn",
         "investigation_requested",
         "published",
-        "rejected"
+        "rejected",
+        "quarantined"
       ]
     },
     "reproduction": { "type": ["string", "null"] },

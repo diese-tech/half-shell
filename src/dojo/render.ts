@@ -6,7 +6,7 @@
  * full page and for the polling fragment, so there is one rendering path.
  */
 import type { CouncilEvent, CouncilFinding, EvidencePacket, Verdict } from '../orchestration/types.js';
-import { summarizeVerdict, type PublicationState, type RunDetail, type RunSummary, type VerdictSummary } from './readModel.js';
+import { publishedDecisions, summarizeVerdict, type PublicationState, type RunDetail, type RunSummary, type VerdictSummary } from './readModel.js';
 
 export const POLL_INTERVAL_MS = 3000;
 
@@ -148,15 +148,23 @@ ${event.content ? `<div class="content">${escapeHtml(event.content)}</div>` : ''
 </li>`;
 }
 
-function renderFindings(findings: CouncilFinding[], verdict: Verdict | null): string {
+function renderFindings(findings: CouncilFinding[], verdict: Verdict | null, publication: PublicationState): string {
   if (!findings.length) return '<p class="muted">No findings recorded.</p>';
   const decisions = new Map((verdict?.findings ?? []).map((d) => [d.findingId, d]));
+  const posted = new Set(verdict ? publishedDecisions(verdict, publication).map((d) => d.findingId) : []);
   return findings
     .map((f) => {
       const d = decisions.get(f.id);
       const where = `${f.affectedCode.file}${f.affectedCode.line != null ? `:${f.affectedCode.line}` : ''}`;
+      // Leo's decision is adjudication history; say so when GitHub never received it.
+      const notPosted =
+        d?.outcome !== 'publish' || posted.has(f.id)
+          ? ''
+          : verdict?.overallOutcome === 'incomplete'
+            ? 'publication suppressed: review incomplete'
+            : `not posted: publication ${publication.state.replace(/_/g, ' ')}`;
       const decision = d
-        ? `<div class="decision">Leo: ${badge(d.outcome, d.outcome === 'publish' ? 'ok' : 'muted')} ${d.blocking ? badge('blocking', 'bad') : badge('non-blocking', 'muted')} ${d.finalSeverity ? badge(d.finalSeverity, 'muted') : ''}<div>${escapeHtml(d.publicReason)}</div>${d.blockingReason ? `<div class="small">Blocking reason: ${escapeHtml(d.blockingReason)}</div>` : ''}</div>`
+        ? `<div class="decision">Leo: ${badge(d.outcome, d.outcome === 'publish' ? 'ok' : 'muted')}${notPosted ? ` ${badge(notPosted, 'bad')}` : ''} ${d.blocking ? badge('blocking', 'bad') : badge('non-blocking', 'muted')} ${d.finalSeverity ? badge(d.finalSeverity, 'muted') : ''}<div>${escapeHtml(d.publicReason)}</div>${d.blockingReason ? `<div class="small">Blocking reason: ${escapeHtml(d.blockingReason)}</div>` : ''}</div>`
         : '';
       return `<div class="finding actor-${actorClass(f.sourcePersona)}" id="${escapeHtml(f.id)}">
 <div class="event-head"><code>${escapeHtml(shortId(f.id))}</code> <span class="actor">${escapeHtml(actorName(f.sourcePersona))}</span> ${badge(f.status, 'muted')} ${badge(f.category, 'muted')} ${f.severity ? badge(f.severity, 'muted') : ''} <span class="small">confidence ${escapeHtml(f.confidence)}</span> <code class="small">${escapeHtml(where)}</code></div>
@@ -169,12 +177,14 @@ ${decision}
     .join('\n');
 }
 
-function renderVerdict(verdict: Verdict | null): string {
+function renderVerdict(verdict: Verdict | null, publication: PublicationState): string {
   if (!verdict) return '<p class="muted">Leo has not recorded a verdict yet.</p>';
   const uncertainty = verdict.unresolvedUncertainty.length
     ? `<div class="small"><em>Unresolved uncertainty:</em><ul>${verdict.unresolvedUncertainty.map((u) => `<li>${escapeHtml(u)}</li>`).join('')}</ul></div>`
     : '';
-  return `<div class="actor-leo finding">${verdictCell(summarizeVerdict(verdict))}<div class="content">${escapeHtml(verdict.rationale)}</div>${uncertainty}<div class="small muted">${time(verdict.createdAt)}</div></div>`;
+  // Leo's rationale is the adjudication record (operator view); the coverage gap is the orchestrator's.
+  const gap = verdict.coverageGap ? `<div class="small"><em>Coverage gap (orchestrator):</em> ${escapeHtml(verdict.coverageGap)}</div>` : '';
+  return `<div class="actor-leo finding">${verdictCell(summarizeVerdict(verdict, publication))}<div class="content">${escapeHtml(verdict.rationale)}</div>${gap}${uncertainty}<div class="small muted">${time(verdict.createdAt)}</div></div>`;
 }
 
 function renderPublication(p: PublicationState): string {
@@ -215,9 +225,9 @@ export function renderRunFragment(detail: RunDetail): string {
 </tbody></table>
 ${run.error ? `<p class="error"><strong>Error:</strong> ${escapeHtml(run.error)}</p>` : ''}`;
 
-  const side = `<section><h2>Leo's verdict</h2>${renderVerdict(detail.verdict)}</section>
+  const side = `<section><h2>Leo's verdict</h2>${renderVerdict(detail.verdict, detail.publication)}</section>
 <section><h2>Publication</h2>${renderPublication(detail.publication)}</section>
-<section><h2>Findings (${detail.findings.length})</h2>${renderFindings(detail.findings, detail.verdict)}</section>
+<section><h2>Findings (${detail.findings.length})</h2>${renderFindings(detail.findings, detail.verdict, detail.publication)}</section>
 <section><h2>Evidence packet</h2>${renderEvidence(detail.evidence)}</section>`;
 
   const events = detail.events.length

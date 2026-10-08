@@ -123,7 +123,9 @@ export type FindingStatus =
   | 'withdrawn'
   | 'investigation_requested'
   | 'published'
-  | 'rejected';
+  | 'rejected'
+  /** Its semantic verification gave no valid verdict: never reviewed further, never published, and the review is incomplete. */
+  | 'quarantined';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
@@ -231,10 +233,17 @@ export interface Verdict {
   reviewId: string;
   reviewer: 'leonardo';
   overallOutcome: OverallOutcome;
+  /** Leo's own words. Adjudication record only; never public for an incomplete review. */
   rationale: string;
   findings: VerdictFindingDecision[];
   unresolvedUncertainty: string[];
   createdAt: string;
+  /**
+   * Why the orchestrator forced this review incomplete (LEO_REVIEW's
+   * fail-safe), in orchestrator text. Not part of Leo's output contract
+   * (verdict.schema.json), so Leo can never set it.
+   */
+  coverageGap?: string;
 }
 
 export type GitHubReviewOutcome = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
