@@ -426,6 +426,23 @@ type EvidenceRef = {
 
 Do not persist entire source files in the review record merely to preserve evidence. Store references and bounded excerpts/hashes when needed.
 
+### Quote grounding
+
+Every independent-review finding must quote, verbatim, a line from the changed file it claims. A finding is dropped before Sparring, without becoming a candidate, in either of two cases:
+
+- **Ungrounded quote:** the quote is missing, too short to identify a line, or not in any changed file.
+- **Provenance mismatch:** the quote comes from a different file than the one claimed, the claimed file is not a changed file in the review, or the finding names a line and the quote's head-side line is not within a few lines of it.
+
+Each drop is recorded as an event that carries its reason. The PR description and related-context files never count as sources, because no finding may be claimed against them. If the changed-files section of the rendered context cannot be parsed, nothing is grounded: the check fails closed and never falls back to the full prompt. This is a floor, not proof. A grounded claim can still be wrong, so the quoted line goes into its evidence.
+
+At the end of Synthesis, before Sparring and Leo, each surviving candidate gets one bounded semantic check. Shredder sees only four things: the claim, the claimed file, the grounded quote, and a few lines of that file around the quote. It never sees the whole PR and never does an open-ended review. It answers whether the cited code makes the claimed harm happen:
+
+- `SUPPORTS`: the code makes the claimed harm happen. Only these findings survive.
+- `CONTRADICTS`: the code prevents or handles the harm, or the text states the behaviour is intentional and bounds the risk. The finding is rejected as a semantic contradiction.
+- `INSUFFICIENT`: the code neither makes the harm happen nor prevents it. The finding is rejected for insufficient evidence.
+
+Every outcome is recorded with its reason. If the verifier gives no valid verdict (the call errors, or the answer is outside the three), the finding stays, marked unverified. A provider failure must never turn a real defect into a clean review.
+
 ### Secret handling
 
 Probable secrets/credentials are hazardous evidence.

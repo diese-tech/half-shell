@@ -11,6 +11,7 @@ import type { PersonaConfig } from '../../personas/types.js';
 import { parseJsonObject } from '../../providers/json.js';
 import type { ModelProvider } from '../provider.js';
 import { personaSystemPrompt } from '../prompt.js';
+import { groundQuote, parseChangedFiles, withQuote, type ChangedFiles, type DropReason } from '../grounding.js';
 import type { RawFinding } from '../synthesis.js';
 import type { FindingCategory, PersonaCodename } from '../types.js';
 
@@ -26,6 +27,7 @@ const INSTRUCTION = [
   '  "category": "bug|regression|security|contract|incomplete_change|missing_test|undocumented_behavior|operational|human_experience|operational_abuse|engineering_discipline",',
   '  "claim": "one sentence stating the defect",',
   '  "evidence": "what in the diff or context proves it",',
+  '  "quote": "one line copied exactly from the changed file you name below, at or near the line you give",',
   '  "file": "path exactly as shown in the diff",',
   '  "line": head-side line number, or null,',
   '  "consequence": "the concrete way this fails at runtime or in practice",',
@@ -35,10 +37,22 @@ const INSTRUCTION = [
   '}',
 ].join('\n');
 
+/** A well-formed finding the provenance gate refused, kept for telemetry — never reviewed further. */
+export interface DroppedFinding {
+  persona: PersonaCodename;
+  claim: string;
+  file: string;
+  line: number | null;
+  quote: string;
+  reason: DropReason;
+  detail: string;
+}
+
 export interface LaneOutcome {
   persona: PersonaCodename;
   ok: boolean;
   findings: RawFinding[];
+  dropped: DroppedFinding[];
   error?: string;
 }
 
@@ -78,19 +92,25 @@ async function runLane(
         continue;
       }
       const raw = Array.isArray(parsed['findings']) ? (parsed['findings'] as Record<string, unknown>[]) : [];
-      const findings = raw
-        .map((item) => normalize(item, codename))
-        .filter((finding): finding is RawFinding => finding !== undefined);
-      return { persona: codename, ok: true, findings };
+      const files = parseChangedFiles(changeContext);
+      const results = raw.map((item) => normalize(item, codename, files));
+      const findings = results.flatMap((result) => (result && 'finding' in result ? [result.finding] : []));
+      const dropped = results.flatMap((result) => (result && 'dropped' in result ? [result.dropped] : []));
+      const malformed = results.filter((result) => result === undefined).length;
+      if (dropped.length > 0 || malformed > 0) {
+        log.info('independent review findings dropped', { persona: codename, kept: findings.length, dropped: dropped.length, malformed });
+      }
+      return { persona: codename, ok: true, findings, dropped };
     }
     log.warn('independent review lane failed validation after retries', { persona: codename, error: lastError });
-    return { persona: codename, ok: false, findings: [], error: lastError };
+    return { persona: codename, ok: false, findings: [], dropped: [], error: lastError };
   } catch (error) {
     log.warn('independent review lane failed', { persona: codename, ...errorFields(error) });
     return {
       persona: codename,
       ok: false,
       findings: [],
+      dropped: [],
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -109,8 +129,14 @@ const CATEGORIES = new Set<FindingCategory>([
   'operational_abuse',
   'engineering_discipline',
 ]);
+
 // Severity is not modeled here — only Leo assigns it, in LEO_REVIEW.
-function normalize(item: Record<string, unknown>, persona: PersonaCodename): RawFinding | undefined {
+// Undefined for a malformed item; a well-formed one either grounds or is dropped with a reason.
+function normalize(
+  item: Record<string, unknown>,
+  persona: PersonaCodename,
+  files: ChangedFiles,
+): { finding: RawFinding } | { dropped: DroppedFinding } | undefined {
   const category = String(item['category'] ?? '').toLowerCase() as FindingCategory;
   const file = typeof item['file'] === 'string' ? item['file'].trim() : '';
   const text = (key: string): string => (typeof item[key] === 'string' ? (item[key] as string).trim() : '');
@@ -122,21 +148,26 @@ function normalize(item: Record<string, unknown>, persona: PersonaCodename): Raw
   if (!claim || !evidence || !consequence) return undefined;
 
   const confidence = Number(item['confidence']);
-  const line = Number(item['line']);
+  const rawLine = Number(item['line']);
+  const line = Number.isInteger(rawLine) && rawLine >= 1 ? rawLine : null;
+  const quote = text('quote');
+  const grounding = groundQuote(files, { file, line, quote });
+  if (!grounding.ok) return { dropped: { persona, claim, file, line, quote, reason: grounding.reason, detail: grounding.detail } };
 
-  return {
+  return { finding: {
     sourcePersona: persona,
     category,
     claim,
-    evidence,
+    // Carried into Sparring and Leo's view, so the line can also refute the claim.
+    evidence: withQuote(evidence, quote),
     affectedCode: {
       file,
-      line: Number.isInteger(line) && line >= 1 ? line : null,
+      line,
       startLine: null,
     },
     consequence,
     confidence: Number.isFinite(confidence) ? Math.min(Math.max(confidence, 0), 1) : 0.5,
     proposedFix: typeof item['proposed_fix'] === 'string' ? item['proposed_fix'] : null,
     rootCause: typeof item['root_cause'] === 'string' ? item['root_cause'] : null,
-  };
+  } };
 }
