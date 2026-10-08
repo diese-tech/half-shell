@@ -251,7 +251,11 @@ describe('engine — end to end with fake providers', () => {
     const result = await ingest(deps, baseInput());
 
     expect(github.state.reviews).toHaveLength(0);
-    expect((await store.listFindings(result.reviewId)).some((f) => f.status === 'published')).toBe(false);
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.status).not.toBe('published');
+    // Each of Leo's publish decisions is recorded as suppressed, not just the run-level supersession.
+    const suppressed = (await store.listEvents(result.reviewId)).filter((e) => e.metadata?.['publication'] === 'suppressed');
+    expect(suppressed.map((e) => [e.findingId, e.metadata?.['reason']])).toEqual([[finding?.id, 'stale_head']]);
   });
 
   it('keeps persisted state consistent with GitHub when a coverage gap (no quarantine) forces incomplete', async () => {
@@ -279,7 +283,7 @@ describe('engine — end to end with fake providers', () => {
     expect(github.state.reviews[0]?.event).toBe('COMMENT');
     expect(github.state.reviews[0]?.body).not.toContain('importRecords still calls load()');
     const suppressed = (await store.listEvents(result.reviewId)).find((e) => e.findingId === finding?.id && e.metadata?.['publication'] === 'suppressed');
-    expect(suppressed?.metadata).toMatchObject({ leoOutcome: 'publish', overallOutcome: 'incomplete' });
+    expect(suppressed?.metadata).toMatchObject({ leoOutcome: 'publish', reason: 'review_incomplete' });
   });
 
   it('records each provenance drop as an event with its reason, and never makes it a candidate', async () => {

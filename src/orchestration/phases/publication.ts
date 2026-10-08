@@ -82,6 +82,25 @@ export function renderReviewBody(verdict: Verdict): string {
   return lines.join('\n');
 }
 
+/** Records that Leo would have published `decision` but GitHub never received it, and why. */
+async function recordSuppressed(
+  store: OrchestrationStore,
+  run: ReviewRun,
+  decision: VerdictFindingDecision,
+  reason: 'review_incomplete' | 'stale_head',
+  why: string,
+): Promise<void> {
+  await recordEvent(store, {
+    reviewId: run.id,
+    phase: 'PUBLICATION',
+    actor: 'orchestrator',
+    eventType: 'finding_updated',
+    findingId: decision.findingId,
+    content: `publication suppressed: Leo would have published this, but ${why}`,
+    metadata: { publication: 'suppressed', leoOutcome: 'publish', reason },
+  });
+}
+
 export interface PublishResult {
   outcome: 'published' | 'already_published' | 'superseded_stale_sha';
   githubReviewOutcome?: GitHubReviewOutcome;
@@ -120,6 +139,10 @@ export async function publish(
       eventType: 'run_superseded',
       content: `PR head moved to ${current.head.sha} before publication; this run reviewed ${run.headSha}.`,
     });
+    // Nothing is posted, so every Leo publish decision is suppressed — on the record, per finding.
+    for (const decision of verdict.findings.filter((d) => d.outcome === 'publish')) {
+      await recordSuppressed(store, run, decision, 'stale_head', 'the PR head moved before posting');
+    }
     await store.saveReviewRun({ ...run, status: 'superseded', updatedAt: new Date().toISOString() });
     return { outcome: 'superseded_stale_sha' };
   }
@@ -150,15 +173,7 @@ export async function publish(
     if (published.has(decision.findingId)) {
       await store.saveFinding({ ...finding, status: 'published' });
     } else {
-      await recordEvent(store, {
-        reviewId: run.id,
-        phase: 'PUBLICATION',
-        actor: 'orchestrator',
-        eventType: 'finding_updated',
-        findingId: decision.findingId,
-        content: `publication suppressed: Leo would have published this, but the review is ${verdict.overallOutcome}`,
-        metadata: { publication: 'suppressed', leoOutcome: 'publish', overallOutcome: verdict.overallOutcome },
-      });
+      await recordSuppressed(store, run, decision, 'review_incomplete', `the review is ${verdict.overallOutcome}`);
     }
   }
 
