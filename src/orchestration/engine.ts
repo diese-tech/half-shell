@@ -531,8 +531,11 @@ async function advancePhases(deps: EngineDependencies, run: ReviewRun, input: We
 
       // Leo's decision is adjudication, not publication: `published` is only
       // written by PUBLICATION once GitHub accepts the review that carries
-      // the finding (phases/publication.ts), never here.
+      // the finding (phases/publication.ts), never here. A decision about a
+      // finding Leo was never given stays in the verdict as history but must
+      // not touch that row: it would erase a quarantine or drop record.
       for (const decision of verdict.findings) {
+        if (!survivingIds.has(decision.findingId)) continue;
         const finding = await store.getFinding(decision.findingId);
         if (!finding) continue;
         await store.saveFinding({

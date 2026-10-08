@@ -478,6 +478,37 @@ describe('engine — end to end with fake providers', () => {
     expect((await store.listFindings(result.reviewId)).some((f) => f.status === 'published')).toBe(false);
   });
 
+  it('never lets a decision on a finding Leo was not given overwrite that finding\'s quarantine', async () => {
+    let quarantinedId: string | undefined;
+    deps = buildDeps({
+      ...zeroSurvivorScript({ result: 'CONCUR_CLEAN', note: 'n' }),
+      'shredder:SYNTHESIS': () => 'garbage',
+      'leo:LEO_REVIEW': () => ({
+        overall_outcome: 'clean_review',
+        rationale: 'r',
+        findings: [{ finding_id: quarantinedId, outcome: 'reject', final_severity: 'low', public_reason: 'not real', blocking: false, blocking_reason: null }],
+        unresolved_uncertainty: [],
+      }),
+    });
+    // Leo learns a real (quarantined) id it was never handed — the fabricated-decision case.
+    const realStore = deps.store;
+    const original = realStore.saveFinding.bind(realStore);
+    realStore.saveFinding = async (f) => {
+      if (f.status === 'quarantined') quarantinedId = f.id;
+      return original(f);
+    };
+
+    const result = await ingest(deps, baseInput());
+
+    const [finding] = await store.listFindings(result.reviewId);
+    expect(finding?.id).toBe(quarantinedId);
+    expect(finding?.status).toBe('quarantined');
+    expect(finding?.severity).toBeNull();
+    const verdict = await store.getVerdict(result.reviewId);
+    expect(verdict?.overallOutcome).toBe('incomplete');
+    expect(verdict?.findings[0]?.outcome).toBe('reject');
+  });
+
   it('records suppression for an incomplete verdict\'s publish decision even when its finding id does not exist', async () => {
     const script = realFindingScript('incomplete');
     deps = buildDeps({
