@@ -96,6 +96,19 @@ describe('runIndependentReview', () => {
     expect(others.every((o) => o.ok)).toBe(true);
   });
 
+  it.each([
+    ['an empty object', {}],
+    ['a non-array findings field', { findings: { category: 'bug' } }],
+  ])('treats %s as a failed lane after retries, never as a clean pass', async (_label, reply) => {
+    const provider = new ScriptedModelProvider({}, () => reply);
+    const outcomes = await runIndependentReview(() => provider, (codename) => minimalPersonaConfig({ codename }), CHANGE);
+    for (const outcome of outcomes) {
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toBe('response had no findings array');
+    }
+    expect(provider.calls).toHaveLength(INDEPENDENT_REVIEWERS.length * 2);
+  });
+
   it('discards a malformed finding (missing required fields) without discarding the whole lane', async () => {
     const provider = new ScriptedModelProvider({}, () => ({
       findings: [

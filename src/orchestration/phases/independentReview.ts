@@ -91,7 +91,14 @@ async function runLane(
         lastError = 'response was not valid JSON';
         continue;
       }
-      const raw: unknown[] = Array.isArray(parsed['findings']) ? parsed['findings'] : [];
+      // Only an actual `findings` array is a result. `{}` or a non-array is
+      // not "found nothing" — it's invalid output, retried and ultimately a
+      // missing lane, never a clean pass.
+      if (!Array.isArray(parsed['findings'])) {
+        lastError = 'response had no findings array';
+        continue;
+      }
+      const raw: unknown[] = parsed['findings'];
       const files = parseChangedFiles(changeContext);
       const results = raw.map((item) => normalize(item, codename, files));
       const findings = results.flatMap((result) => ('finding' in result ? [result.finding] : []));
