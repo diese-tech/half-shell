@@ -252,7 +252,7 @@ A failed or meaningfully incomplete review can never use clean-review language.
 
 When safe to publish, Half-Shell should clearly say the Dojo could not complete the round and that no clean verdict was issued. `@half-shell` retries the current PR state.
 
-An incomplete review publishes **no findings**, including ones Leo decided to publish. Leo's verdict is kept as the adjudication record, so "Leo would have published this" is never lost. Publication is a separate, effective state. A finding's persisted status may be `published` only if that finding was actually included in the GitHub review that Half-Shell posted for that review generation. It is never `published` for a suppressed incomplete review, for a run whose PR head moved before posting, or for any review that was never posted. Each suppressed publish decision is recorded as an event.
+An incomplete review publishes **no findings**, including ones Leo decided to publish. Leo's verdict is kept as the adjudication record, so "Leo would have published this" is never lost. Publication is a separate, effective state. A finding's persisted status may be `published` only if that finding was actually included in the GitHub review that Half-Shell posted for that review generation. It is never `published` for a suppressed incomplete review, for a run whose PR head moved before posting, or for any review that was never posted. Each suppressed publish decision is recorded as an event. The same rule applies to anything read later (Dojo, summaries, future consumers): it counts a finding as published only when that run's publication completed and the review was not incomplete, never from Leo's decision alone.
 
 ### Positive observations
 

@@ -14,6 +14,7 @@ import type {
   GitHubReviewOutcome,
   ReviewRun,
   Verdict,
+  VerdictFindingDecision,
 } from '../orchestration/types.js';
 
 /** The only store surface the viewer is allowed to touch: reads. */
@@ -24,11 +25,11 @@ export type DojoReader = Pick<
 
 export interface VerdictSummary {
   overallOutcome: Verdict['overallOutcome'];
-  /** Decisions Leo published as blocking. */
+  /** Blocking decisions GitHub actually received (completed publication, review not incomplete). */
   blocking: number;
-  /** Decisions Leo published as non-blocking. */
+  /** Non-blocking decisions GitHub actually received. */
   nonBlocking: number;
-  /** Decisions that were not published (reject, merge, narrow, ...). */
+  /** Every other decision: rejected, merged, or a Leo publish decision that never reached GitHub. */
   notPublished: number;
 }
 
@@ -71,10 +72,19 @@ export function isActive(run: ReviewRun): boolean {
   return run.status === 'running';
 }
 
-export function summarizeVerdict(verdict: Verdict | undefined | null): VerdictSummary | null {
+/**
+ * The decisions GitHub actually received: nothing unless the run's
+ * publication completed (a superseded, failed, or not-yet-posted run
+ * published nothing), and nothing for an incomplete review even then.
+ * Leo's raw `publish` decisions stay visible as adjudication, not as this.
+ */
+export function publishedDecisions(verdict: Verdict, publication: PublicationState): VerdictFindingDecision[] {
+  return publication.state === 'published' ? effectivelyPublished(verdict) : [];
+}
+
+export function summarizeVerdict(verdict: Verdict | undefined | null, publication: PublicationState): VerdictSummary | null {
   if (!verdict) return null;
-  // Effective publication, not Leo's raw intent: an incomplete review published nothing.
-  const published = effectivelyPublished(verdict);
+  const published = publishedDecisions(verdict, publication);
   const blocking = published.filter((f) => f.blocking).length;
   return {
     overallOutcome: verdict.overallOutcome,
@@ -120,7 +130,7 @@ export function publicationState(run: ReviewRun, events: CouncilEvent[]): Public
   return base;
 }
 
-export function summarizeRun(run: ReviewRun, verdict: Verdict | undefined | null): RunSummary {
+export function summarizeRun(run: ReviewRun, verdict: Verdict | undefined | null, publication: PublicationState): RunSummary {
   return {
     id: run.id,
     repository: run.repositoryFullName || run.repositoryId,
@@ -133,13 +143,18 @@ export function summarizeRun(run: ReviewRun, verdict: Verdict | undefined | null
     active: isActive(run),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
-    verdict: summarizeVerdict(verdict),
+    verdict: summarizeVerdict(verdict, publication),
   };
 }
 
 export async function listRunSummaries(reader: DojoReader, limit: number): Promise<RunSummary[]> {
   const runs = await reader.listRecentReviewRuns(limit);
-  return Promise.all(runs.map(async (run) => summarizeRun(run, await reader.getVerdict(run.id))));
+  return Promise.all(
+    runs.map(async (run) => {
+      const [verdict, events] = await Promise.all([reader.getVerdict(run.id), reader.listEvents(run.id)]);
+      return summarizeRun(run, verdict, publicationState(run, events));
+    }),
+  );
 }
 
 export async function getRunDetail(reader: DojoReader, reviewId: string): Promise<RunDetail | undefined> {
@@ -151,13 +166,14 @@ export async function getRunDetail(reader: DojoReader, reviewId: string): Promis
     reader.getVerdict(reviewId),
     reader.getEvidencePacket(reviewId),
   ]);
+  const publication = publicationState(run, events);
   return {
     run,
-    summary: summarizeRun(run, verdict),
+    summary: summarizeRun(run, verdict, publication),
     events,
     findings,
     verdict: verdict ?? null,
     evidence: evidence ?? null,
-    publication: publicationState(run, events),
+    publication,
   };
 }
